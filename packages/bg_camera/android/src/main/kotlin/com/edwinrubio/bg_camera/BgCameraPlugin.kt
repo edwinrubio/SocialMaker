@@ -54,18 +54,28 @@ class BgCameraPlugin :
                 result.success(null)
             }
             "startSegment" -> withPipeline(result) {
-                try {
-                    it.startSegment()
-                    result.success(null)
-                } catch (e: Exception) {
-                    result.error("record_failed", e.message, null)
+                it.startSegment { outcome ->
+                    mainHandler.post {
+                        outcome.fold(
+                            { result.success(null) },
+                            { error -> result.error("record_failed", error.message, null) },
+                        )
+                    }
                 }
             }
             "stopSegment" -> withPipeline(result) {
                 it.stopSegment { outcome ->
                     mainHandler.post {
                         outcome.fold(
-                            { segment -> result.success(mapOf("path" to segment.path, "durationMs" to segment.durationMs)) },
+                            { segment ->
+                                result.success(
+                                    mapOf(
+                                        "path" to segment.path,
+                                        "durationMs" to segment.durationMs,
+                                        "thumbnailPath" to segment.thumbnailPath,
+                                    ),
+                                )
+                            },
                             { error -> result.error("record_failed", error.message, null) },
                         )
                     }
@@ -135,6 +145,7 @@ class BgCameraPlugin :
 
     private fun initialize(front: Boolean, result: Result) {
         dispose()
+        Recordings.clear(context)
         val pipeline = CameraPipeline(context, textures)
         this.pipeline = pipeline
         pipeline.start(front) { error ->

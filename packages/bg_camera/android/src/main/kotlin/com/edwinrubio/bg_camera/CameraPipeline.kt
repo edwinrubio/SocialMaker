@@ -2,8 +2,7 @@ package com.edwinrubio.bg_camera
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Matrix
-import android.os.SystemClock
+import android.util.Log
 import android.util.Size
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -15,19 +14,12 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
-import com.google.mediapipe.framework.image.BitmapImageBuilder
-import com.google.mediapipe.framework.image.ByteBufferExtractor
-import com.google.mediapipe.tasks.core.BaseOptions
-import com.google.mediapipe.tasks.vision.core.RunningMode
-import com.google.mediapipe.tasks.vision.imagesegmenter.ImageSegmenter
 import io.flutter.view.TextureRegistry
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import kotlin.math.roundToInt
 
-/** Person mask, one byte per pixel (255 = person), same orientation as the camera frame. */
+/** Person mask, one byte per pixel (255 = person), in upright orientation. */
 class Mask(val bytes: ByteBuffer, val width: Int, val height: Int)
 
 /**
@@ -43,7 +35,7 @@ class CameraPipeline(
     companion object {
         const val OUTPUT_WIDTH = 720
         const val OUTPUT_HEIGHT = 1280
-        private const val MODEL_ASSET = "selfie_segmenter.tflite"
+        private const val TAG = "bg_camera"
     }
 
     private val lifecycleRegistry = LifecycleRegistry(this)
@@ -58,8 +50,13 @@ class CameraPipeline(
     private var front = true
 
     @Volatile private var segmentationEnabled = false
-    private var segmenter: ImageSegmenter? = null
-    private var lastSegmentationMs = 0L
+    private var segmenter: PersonSegmenter? = null
+    private var segmenterUnavailable = false
+    // Two bitmaps used alternately: some GPU drivers (the emulator's among them)
+    // read an uploaded bitmap after the upload call returns, so overwriting the
+    // same one for the next frame tears the image.
+    private val frameBitmaps = arrayOfNulls<Bitmap>(2)
+    private var frameIndex = 0
 
     fun start(front: Boolean, callback: (Exception?) -> Unit) {
         this.front = front
@@ -96,7 +93,7 @@ class CameraPipeline(
         renderer.setBackground(background)
     }
 
-    fun startSegment() = renderer.startRecording()
+    fun startSegment(callback: (kotlin.Result<Unit>) -> Unit) = renderer.startRecording(callback)
 
     fun stopSegment(callback: (kotlin.Result<RecordedSegment>) -> Unit) = renderer.stopRecording(callback)
 
@@ -136,58 +133,87 @@ class CameraPipeline(
         provider.bindToLifecycle(this, selector, analysis)
     }
 
-    private fun analyze(image: ImageProxy) {
-        val frame =
-            image.use {
-                upright(it.toBitmap(), it.imageInfo.rotationDegrees, mirror = front)
+    private var statsStart = 0L
+    private var statsFrames = 0
+    private var statsDropped = 0
+    private var statsCopyNs = 0L
+    private var statsSegmentNs = 0L
+
+    private fun analyze(image: ImageProxy) =
+        image.use {
+            logStats()
+            statsFrames++
+            // Skip the frame while the renderer still draws the previous one: the
+            // bitmaps below are reused and must not change under it.
+            if (!renderer.tryAcquireFrame()) {
+                statsDropped++
+                return@use
             }
-        val mask = if (segmentationEnabled) segment(frame) else null
-        renderer.submitFrame(frame, mask)
+            try {
+                val t0 = System.nanoTime()
+                val bitmap = copyToBitmap(it)
+                val t1 = System.nanoTime()
+                val rotation = it.imageInfo.rotationDegrees
+                val mask = if (segmentationEnabled) segment(bitmap, rotation, front) else null
+                statsCopyNs += t1 - t0
+                statsSegmentNs += System.nanoTime() - t1
+                renderer.submitFrame(CameraFrame(bitmap, rotation, front), mask)
+            } catch (e: Exception) {
+                renderer.cancelFrame()
+                Log.w(TAG, "Analysis failed", e)
+            }
+        }
+
+    private fun logStats() {
+        val now = System.nanoTime()
+        if (now - statsStart < 2_000_000_000L) return
+        if (statsStart != 0L && statsFrames > 0) {
+            val drawn = (statsFrames - statsDropped).coerceAtLeast(1)
+            Log.d(
+                TAG,
+                "camera fps ${statsFrames * 1_000_000_000L / (now - statsStart)}, dropped $statsDropped, " +
+                    "copy ${statsCopyNs / drawn / 1000} us, segment ${statsSegmentNs / drawn / 1000} us",
+            )
+        }
+        statsStart = now
+        statsFrames = 0
+        statsDropped = 0
+        statsCopyNs = 0
+        statsSegmentNs = 0
     }
 
-    /** Rotates the sensor frame to portrait and mirrors the selfie camera. */
-    private fun upright(
-        source: Bitmap,
+    /** Copies the RGBA frame into a reused bitmap, in sensor orientation. */
+    private fun copyToBitmap(image: ImageProxy): Bitmap {
+        val plane = image.planes[0]
+        frameIndex = 1 - frameIndex
+        if (plane.pixelStride != 4 || plane.rowStride != image.width * 4) {
+            return image.toBitmap().also { frameBitmaps[frameIndex] = it }
+        }
+        val bitmap =
+            frameBitmaps[frameIndex]?.takeIf { it.width == image.width && it.height == image.height }
+                ?: Bitmap
+                    .createBitmap(image.width, image.height, Bitmap.Config.ARGB_8888)
+                    .also { frameBitmaps[frameIndex] = it }
+        plane.buffer.rewind()
+        bitmap.copyPixelsFromBuffer(plane.buffer)
+        return bitmap
+    }
+
+    private fun segment(
+        frame: Bitmap,
         rotationDegrees: Int,
         mirror: Boolean,
-    ): Bitmap {
-        if (rotationDegrees == 0 && !mirror) return source
-        val matrix =
-            Matrix().apply {
-                postRotate(rotationDegrees.toFloat())
-                if (mirror) postScale(-1f, 1f)
+    ): Mask? {
+        if (segmenterUnavailable) return null
+        val segmenter =
+            segmenter ?: try {
+                PersonSegmenter(context).also { segmenter = it }
+            } catch (e: Exception) {
+                // Keep the camera running without background replacement.
+                Log.e(TAG, "Segmentation unavailable", e)
+                segmenterUnavailable = true
+                return null
             }
-        val rotated = Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, false)
-        source.recycle()
-        return rotated
+        return segmenter.segment(frame, rotationDegrees, mirror)
     }
-
-    private fun segment(frame: Bitmap): Mask? {
-        val segmenter = segmenter ?: createSegmenter().also { segmenter = it }
-        // VIDEO mode requires strictly increasing timestamps.
-        val timestampMs = maxOf(SystemClock.uptimeMillis(), lastSegmentationMs + 1)
-        lastSegmentationMs = timestampMs
-        val result = segmenter.segmentForVideo(BitmapImageBuilder(frame).build(), timestampMs)
-        // The selfie model's last confidence mask is "person".
-        val confidence = result.confidenceMasks().orElse(null)?.lastOrNull() ?: return null
-        val floats = ByteBufferExtractor.extract(confidence).order(ByteOrder.nativeOrder()).asFloatBuffer()
-        val bytes = ByteBuffer.allocateDirect(confidence.width * confidence.height)
-        while (floats.hasRemaining()) {
-            bytes.put((floats.get().coerceIn(0f, 1f) * 255f).roundToInt().toByte())
-        }
-        bytes.flip()
-        return Mask(bytes, confidence.width, confidence.height)
-    }
-
-    private fun createSegmenter(): ImageSegmenter =
-        ImageSegmenter.createFromOptions(
-            context,
-            ImageSegmenter.ImageSegmenterOptions
-                .builder()
-                .setBaseOptions(BaseOptions.builder().setModelAssetPath(MODEL_ASSET).build())
-                .setRunningMode(RunningMode.VIDEO)
-                .setOutputCategoryMask(false)
-                .setOutputConfidenceMasks(true)
-                .build(),
-        )
 }

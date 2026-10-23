@@ -1,27 +1,52 @@
 package com.edwinrubio.bg_camera
 
 import android.annotation.SuppressLint
+import android.content.Context
+import android.graphics.Bitmap
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
+import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import android.media.MediaRecorder
+import android.util.Log
 import android.view.Surface
 import java.io.File
 import java.nio.ByteBuffer
+import java.util.UUID
+
+/**
+ * Fragments and merged videos. Not in cacheDir: Android purges it when storage
+ * runs low, which can delete fragments mid-session.
+ */
+object Recordings {
+    fun dir(context: Context) = File(context.filesDir, "recordings").apply { mkdirs() }
+
+    fun newFile(
+        context: Context,
+        prefix: String,
+    ) = File(dir(context), "${prefix}_${UUID.randomUUID()}.mp4")
+
+    /** Fragments don't outlive the session, so leftovers from a killed app are dropped. */
+    fun clear(context: Context) {
+        dir(context).listFiles()?.forEach { it.delete() }
+    }
+}
 
 class RecordedSegment(
     val path: String,
     val durationMs: Long,
+    val thumbnailPath: String?,
 )
 
 /**
  * Encodes one fragment: H.264 from [inputSurface] (fed by the GL thread) plus
  * AAC from the microphone on its own thread, muxed into an .mp4.
  *
- * [onFrameRendered] and [finish] must be called on the GL thread.
+ * Construction sets up the codecs (slow) and [begin] starts capturing (fast).
+ * [onFrameRendered] is called on the GL thread.
  */
 @SuppressLint("MissingPermission") // RECORD_AUDIO is requested by the app before initialize.
 class SegmentRecorder(
@@ -31,10 +56,11 @@ class SegmentRecorder(
 ) {
     private val videoEncoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
     private val audioEncoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
-    private val audioRecord: AudioRecord
+    private lateinit var audioRecord: AudioRecord
     private val muxer = MediaMuxer(output.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
-    private val startNanos = System.nanoTime()
-    val inputSurface: Surface
+    private var startNanos = 0L
+    lateinit var inputSurface: Surface
+        private set
 
     private val muxerLock = Any()
     private var videoTrack = -1
@@ -44,10 +70,24 @@ class SegmentRecorder(
     private var firstVideoUs = -1L
     private var lastVideoUs = -1L
 
-    @Volatile private var capturingAudio = true
-    private val audioThread: Thread
+    @Volatile private var capturingAudio = false
+    private var audioThread: Thread? = null
 
     init {
+        try {
+            configure(width, height)
+        } catch (e: Exception) {
+            // Emulators in particular can fail here; don't leak the codecs.
+            release()
+            output.delete()
+            throw e
+        }
+    }
+
+    private fun configure(
+        width: Int,
+        height: Int,
+    ) {
         val videoFormat =
             MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
@@ -77,6 +117,11 @@ class SegmentRecorder(
                 AudioFormat.ENCODING_PCM_16BIT,
                 minBuffer * 4,
             )
+    }
+
+    fun begin() {
+        startNanos = System.nanoTime()
+        capturingAudio = true
         audioThread = Thread(::captureAudio, "bg_camera.audio").apply { start() }
     }
 
@@ -90,12 +135,14 @@ class SegmentRecorder(
             capturingAudio = false
             videoEncoder.signalEndOfInputStream()
             drain(videoEncoder, isVideo = true, endOfStream = true)
-            audioThread.join()
+            audioThread?.join(AUDIO_JOIN_TIMEOUT_MS)
+            check(audioThread?.isAlive != true) { "Audio encoder did not finish" }
             synchronized(muxerLock) {
+                Log.d(TAG, "finish: muxerStarted=$muxerStarted video=$firstVideoUs..$lastVideoUs")
                 check(muxerStarted && lastVideoUs >= 0) { "Segment too short" }
                 muxer.stop()
             }
-            return RecordedSegment(output.path, (lastVideoUs - firstVideoUs) / 1000)
+            return RecordedSegment(output.path, (lastVideoUs - firstVideoUs) / 1000, writeThumbnail())
         } catch (e: Exception) {
             output.delete()
             throw e
@@ -106,24 +153,61 @@ class SegmentRecorder(
 
     fun cancel() {
         capturingAudio = false
-        audioThread.join()
+        audioThread?.join(AUDIO_JOIN_TIMEOUT_MS)
         release()
         output.delete()
     }
 
-    private fun captureAudio() {
-        audioRecord.startRecording()
-        val chunk = ByteArray(2048)
-        while (capturingAudio) {
-            val read = audioRecord.read(chunk, 0, chunk.size)
-            if (read <= 0) continue
-            val ptsUs = relativeUs(System.nanoTime()) - read / 2 * 1_000_000L / SAMPLE_RATE
-            queueAudio(chunk, read, ptsUs.coerceAtLeast(0), flags = 0)
-            drain(audioEncoder, isVideo = false, endOfStream = false)
+    /** Saves the first frame next to the video as a small JPEG. */
+    private fun writeThumbnail(): String? =
+        runCatching {
+            val retriever = MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(output.path)
+                val frame = retriever.getFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: return null
+                val scale = THUMBNAIL_SIZE.toFloat() / maxOf(frame.width, frame.height)
+                val small =
+                    Bitmap.createScaledBitmap(frame, (frame.width * scale).toInt(), (frame.height * scale).toInt(), true)
+                val file = File(output.path.removeSuffix(".mp4") + ".jpg")
+                file.outputStream().use { small.compress(Bitmap.CompressFormat.JPEG, 80, it) }
+                file.path
+            } finally {
+                retriever.release()
+            }
+        }.getOrElse {
+            Log.w(TAG, "Thumbnail failed", it)
+            null
         }
-        audioRecord.stop()
-        queueAudio(chunk, 0, relativeUs(System.nanoTime()), MediaCodec.BUFFER_FLAG_END_OF_STREAM)
-        drain(audioEncoder, isVideo = false, endOfStream = true)
+
+    private fun captureAudio() {
+        try {
+            audioRecord.startRecording()
+            val chunk = ByteArray(2048)
+            var samplesQueued = 0L
+            var samplesDropped = 0L
+            while (capturingAudio) {
+                val read = audioRecord.read(chunk, 0, chunk.size)
+                if (read <= 0) continue
+                // Some sources (emulators, some HALs) return audio faster than
+                // real time; anything beyond the elapsed time would stretch the
+                // fragment, so it is dropped. Timestamps follow the sample count.
+                val elapsedSamples = (System.nanoTime() - startNanos) * SAMPLE_RATE / 1_000_000_000L
+                if (samplesQueued > elapsedSamples + SAMPLE_RATE / 10) {
+                    samplesDropped += read / 2
+                    continue
+                }
+                val ptsUs = samplesQueued * 1_000_000L / SAMPLE_RATE
+                queueAudio(chunk, read, ptsUs, flags = 0)
+                samplesQueued += read / 2
+                drain(audioEncoder, isVideo = false, endOfStream = false)
+            }
+            Log.d(TAG, "audio: queued ${samplesQueued * 1000 / SAMPLE_RATE} ms, dropped ${samplesDropped * 1000 / SAMPLE_RATE} ms")
+            audioRecord.stop()
+            queueAudio(chunk, 0, samplesQueued * 1_000_000L / SAMPLE_RATE, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+            drain(audioEncoder, isVideo = false, endOfStream = true)
+        } catch (e: Exception) {
+            Log.e(TAG, "Audio capture failed", e)
+        }
     }
 
     private fun queueAudio(
@@ -132,10 +216,13 @@ class SegmentRecorder(
         ptsUs: Long,
         flags: Int,
     ) {
-        var index: Int
-        do {
+        // Free input buffers by draining output, or the codec can stall here.
+        var index = audioEncoder.dequeueInputBuffer(TIMEOUT_US)
+        var attempts = 0
+        while (index < 0 && ++attempts < MAX_IDLE_ROUNDS) {
+            drain(audioEncoder, isVideo = false, endOfStream = false)
             index = audioEncoder.dequeueInputBuffer(TIMEOUT_US)
-        } while (index < 0 && (capturingAudio || flags != 0))
+        }
         if (index < 0) return
         audioEncoder.getInputBuffer(index)!!.apply {
             clear()
@@ -209,15 +296,14 @@ class SegmentRecorder(
 
     private fun trackFor(isVideo: Boolean) = if (isVideo) videoTrack else audioTrack
 
-    private fun relativeUs(nanos: Long) = (nanos - startNanos) / 1000
 
     private fun release() {
         runCatching { videoEncoder.stop() }
         runCatching { audioEncoder.stop() }
         videoEncoder.release()
         audioEncoder.release()
-        audioRecord.release()
-        inputSurface.release()
+        if (::audioRecord.isInitialized) audioRecord.release()
+        if (::inputSurface.isInitialized) inputSurface.release()
         runCatching { muxer.release() }
     }
 
@@ -231,5 +317,8 @@ class SegmentRecorder(
         const val SAMPLE_RATE = 44_100
         const val TIMEOUT_US = 10_000L
         const val MAX_IDLE_ROUNDS = 100
+        const val AUDIO_JOIN_TIMEOUT_MS = 2_000L
+        const val THUMBNAIL_SIZE = 240
+        const val TAG = "bg_camera"
     }
 }

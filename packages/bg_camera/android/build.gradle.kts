@@ -46,6 +46,7 @@ android {
 
     defaultConfig {
         minSdk = 24
+        consumerProguardFiles("proguard-rules.pro")
     }
 
     androidResources {
@@ -83,9 +84,8 @@ dependencies {
     implementation("androidx.camera:camera-camera2:$cameraxVersion")
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
     implementation("androidx.media3:media3-exoplayer:$media3Version")
-    implementation("androidx.media3:media3-transformer:$media3Version")
     implementation("androidx.exifinterface:exifinterface:1.4.1")
-    implementation("com.google.mediapipe:tasks-vision:0.10.29")
+    implementation("com.google.ai.edge.litert:litert:1.4.1")
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.mockito:mockito-core:5.0.0")
 }

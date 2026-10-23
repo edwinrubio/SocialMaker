@@ -15,9 +15,17 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
-import java.util.UUID
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.atomic.AtomicBoolean
+
+/** A camera frame in sensor orientation; [rotationDegrees] and [mirror] make it upright. */
+class CameraFrame(
+    val bitmap: Bitmap,
+    val rotationDegrees: Int,
+    val mirror: Boolean,
+)
 
 /**
  * Owns the GL thread. Draws each camera frame — composited over the background
@@ -45,6 +53,8 @@ class GlRenderer(
             .apply { position(0) }
 
     private var cameraTexture = 0
+    private var cameraTextureSize = 0 to 0
+    private val cameraMatrix = FloatArray(16)
     private var maskTexture = 0
     private var backgroundTexture = 0
     private var backgroundImageSize = 0 to 0
@@ -56,12 +66,18 @@ class GlRenderer(
     private var recorder: SegmentRecorder? = null
     private var recorderSurface: EGLSurface? = null
 
+    // Creating encoders takes from 0.5 s to seconds, so the next recorder is
+    // prepared ahead of time and pressing record only has to start it.
+    private val prepareExecutor = Executors.newSingleThreadExecutor()
+    private var preparedRecorder: Future<SegmentRecorder>? = null
+
     init {
         runOnGl {
             egl = EglCore()
             programs = Programs()
             cameraTexture = createTexture(GLES20.GL_TEXTURE_2D)
             maskTexture = createTexture(GLES20.GL_TEXTURE_2D)
+            prepareNextRecorder()
         }
     }
 
@@ -90,36 +106,54 @@ class GlRenderer(
             }
         }
 
-    /** Takes ownership of [frame]. Drops it if the previous frame is still being drawn. */
+    /**
+     * Reserves the renderer for one frame; false while the previous frame is
+     * still being drawn. The caller must then call [submitFrame] or [cancelFrame].
+     */
+    fun tryAcquireFrame() = !released.get() && framePending.compareAndSet(false, true)
+
+    fun cancelFrame() = framePending.set(false)
+
+    /** The frame's bitmap stays in use until the next [tryAcquireFrame] succeeds. */
     fun submitFrame(
-        frame: Bitmap,
+        frame: CameraFrame,
         mask: Mask?,
     ) {
-        if (released.get() || !framePending.compareAndSet(false, true)) {
-            frame.recycle()
-            return
-        }
         handler.post {
             try {
-                draw(frame, mask, System.nanoTime())
+                val start = System.nanoTime()
+                draw(frame, mask, start)
+                drawNanos += System.nanoTime() - start
             } catch (e: Exception) {
                 // A surface can vanish mid-frame (app backgrounded); skip the frame.
                 Log.w(TAG, "Frame dropped", e)
                 egl.makePbufferCurrent()
             } finally {
-                frame.recycle()
                 framePending.set(false)
             }
         }
     }
 
-    fun startRecording() =
-        runOnGl {
-            check(recorder == null) { "A segment is already being recorded" }
-            val output = File(context.cacheDir, "segment_${UUID.randomUUID()}.mp4")
-            val newRecorder = SegmentRecorder(width, height, output)
-            recorder = newRecorder
-            recorderSurface = egl.createWindowSurface(newRecorder.inputSurface)
+    /** [callback] runs on the GL thread once the encoder is ready, or with the failure. */
+    fun startRecording(callback: (kotlin.Result<Unit>) -> Unit) =
+        handler.post {
+            callback(
+                runCatching {
+                    check(recorder == null) { "A segment is already being recorded" }
+                    val waitStart = System.nanoTime()
+                    val prepared =
+                        runCatching { preparedRecorder?.get() }
+                            .onFailure { Log.w(TAG, "Prepared recorder failed, creating a new one", it) }
+                            .getOrNull()
+                    val newRecorder = prepared ?: createRecorder()
+                    Log.d(TAG, "recording started after ${(System.nanoTime() - waitStart) / 1_000_000} ms")
+                    preparedRecorder = null
+                    recorderSurface = egl.createWindowSurface(newRecorder.inputSurface)
+                    newRecorder.begin()
+                    recorder = newRecorder
+                    prepareNextRecorder()
+                },
+            )
         }
 
     fun stopRecording(callback: (kotlin.Result<RecordedSegment>) -> Unit) =
@@ -132,7 +166,8 @@ class GlRenderer(
             recorderSurface?.let { egl.releaseSurface(it) }
             recorderSurface = null
             recorder = null
-            callback(runCatching { current.finish() })
+            // Draining the encoders takes a moment; keep the preview running meanwhile.
+            Thread({ callback(runCatching { current.finish() }) }, "bg_camera.finish").start()
         }
 
     fun release() {
@@ -140,6 +175,8 @@ class GlRenderer(
         runOnGl {
             recorderSurface?.let { egl.releaseSurface(it) }
             recorder?.cancel()
+            preparedRecorder?.let { prepared -> runCatching { prepared.get().cancel() } }
+            prepareExecutor.shutdown()
             previewSurface?.let { egl.releaseSurface(it) }
             releaseBackground()
             egl.release()
@@ -148,21 +185,33 @@ class GlRenderer(
     }
 
     private fun draw(
-        frame: Bitmap,
+        frame: CameraFrame,
         mask: Mask?,
         timestampNanos: Long,
     ) {
         if (released.get()) return
+        val bitmap = frame.bitmap
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, cameraTexture)
-        GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, frame, 0)
+        if (cameraTextureSize == bitmap.width to bitmap.height) {
+            GLUtils.texSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, bitmap)
+        } else {
+            GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmap, 0)
+            cameraTextureSize = bitmap.width to bitmap.height
+        }
 
         val program = selectProgram(mask)
-        val cameraScale = fillScale(frame.width, frame.height)
+        val sideways = frame.rotationDegrees % 180 != 0
+        val cameraScale =
+            if (sideways) fillScale(bitmap.height, bitmap.width) else fillScale(bitmap.width, bitmap.height)
+        uprightToSensor(frame.rotationDegrees, frame.mirror, cameraMatrix)
 
         previewSurface?.let { surface ->
             egl.makeCurrent(surface)
             drawQuad(program, cameraScale)
+            // Finish on this thread so Flutter's consumer never waits on the
+            // buffer's GPU fence on the platform thread (seconds on some GPUs).
+            GLES20.glFinish()
             egl.swapBuffers(surface)
         }
         val recorder = recorder
@@ -175,6 +224,24 @@ class GlRenderer(
             recorder.onFrameRendered()
         }
         egl.makePbufferCurrent()
+        logFrameRate(timestampNanos)
+    }
+
+    private var frameCount = 0
+    private var drawNanos = 0L
+    private var frameWindowStart = 0L
+
+    private fun logFrameRate(nowNanos: Long) {
+        frameCount++
+        val elapsed = nowNanos - frameWindowStart
+        if (elapsed >= 2_000_000_000L) {
+            if (frameWindowStart != 0L) {
+                Log.d(TAG, "preview fps: ${frameCount * 1_000_000_000L / elapsed}, draw ${drawNanos / frameCount / 1000} us")
+            }
+            frameCount = 0
+            drawNanos = 0
+            frameWindowStart = nowNanos
+        }
     }
 
     /** Uploads the mask and background for this frame and picks the matching shader. */
@@ -211,7 +278,7 @@ class GlRenderer(
         cameraScale: FloatArray,
     ) {
         GLES20.glViewport(0, 0, width, height)
-        program.use(quad, cameraScale, backgroundMatrix)
+        program.use(quad, cameraScale, cameraMatrix, backgroundMatrix)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
     }
 
@@ -223,6 +290,13 @@ class GlRenderer(
         val source = w.toFloat() / h
         val target = width.toFloat() / height
         return if (source > target) floatArrayOf(target / source, 1f) else floatArrayOf(1f, source / target)
+    }
+
+    private fun createRecorder() =
+        SegmentRecorder(width, height, Recordings.newFile(context, "segment"))
+
+    private fun prepareNextRecorder() {
+        preparedRecorder = prepareExecutor.submit<SegmentRecorder> { createRecorder() }
     }
 
     private fun releaseBackground() {
@@ -267,6 +341,48 @@ class GlRenderer(
 
     private companion object {
         const val TAG = "bg_camera"
+
+        /**
+         * Fills [out] with the column-major affine map from upright texture
+         * coordinates (u, v) to sensor coordinates (x, y): CameraX rotates the
+         * sensor image clockwise by [rotationDegrees] and the selfie view is
+         * mirrored afterwards, so this undoes the mirror and then the rotation.
+         */
+        fun uprightToSensor(
+            rotationDegrees: Int,
+            mirror: Boolean,
+            out: FloatArray,
+        ) {
+            // u' = mirror ? 1 - u : u  ==  mu * u + mc
+            val mu = if (mirror) -1f else 1f
+            val mc = if (mirror) 1f else 0f
+            // x = a*u + b*v + c, y = d*u + e*v + f
+            val (a, b, c, d, e, f) =
+                when (((rotationDegrees % 360) + 360) % 360) {
+                    90 -> Affine(0f, 1f, 0f, -mu, 0f, 1f - mc)
+                    180 -> Affine(-mu, 0f, 1f - mc, 0f, -1f, 1f)
+                    270 -> Affine(0f, -1f, 1f, mu, 0f, mc)
+                    else -> Affine(mu, 0f, mc, 0f, 1f, 0f)
+                }
+            out.fill(0f)
+            out[0] = a
+            out[1] = d
+            out[4] = b
+            out[5] = e
+            out[10] = 1f
+            out[12] = c
+            out[13] = f
+            out[15] = 1f
+        }
+
+        data class Affine(
+            val a: Float,
+            val b: Float,
+            val c: Float,
+            val d: Float,
+            val e: Float,
+            val f: Float,
+        )
 
         // x, y, u, v — triangle strip covering the viewport; uv origin is the image's top-left.
         val QUAD =

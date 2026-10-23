@@ -23,6 +23,7 @@ class Programs {
         private val position = GLES20.glGetAttribLocation(id, "aPosition")
         private val texCoord = GLES20.glGetAttribLocation(id, "aTexCoord")
         private val cameraScaleLocation = GLES20.glGetUniformLocation(id, "uCameraScale")
+        private val cameraMatrixLocation = GLES20.glGetUniformLocation(id, "uCameraMatrix")
         private val backgroundScaleLocation = GLES20.glGetUniformLocation(id, "uBackgroundScale")
         private val backgroundMatrixLocation = GLES20.glGetUniformLocation(id, "uBackgroundMatrix")
 
@@ -31,6 +32,7 @@ class Programs {
         fun use(
             quad: FloatBuffer,
             cameraScale: FloatArray,
+            cameraMatrix: FloatArray,
             backgroundMatrix: FloatArray,
         ) {
             GLES20.glUseProgram(id)
@@ -42,6 +44,7 @@ class Programs {
             GLES20.glEnableVertexAttribArray(texCoord)
 
             GLES20.glUniform2fv(cameraScaleLocation, 1, cameraScale, 0)
+            GLES20.glUniformMatrix4fv(cameraMatrixLocation, 1, false, cameraMatrix, 0)
             GLES20.glUniform2fv(backgroundScaleLocation, 1, backgroundScale, 0)
             GLES20.glUniformMatrix4fv(backgroundMatrixLocation, 1, false, backgroundMatrix, 0)
             GLES20.glUniform1i(GLES20.glGetUniformLocation(id, "uCamera"), 0)
@@ -55,13 +58,18 @@ class Programs {
             attribute vec4 aPosition;
             attribute vec2 aTexCoord;
             uniform vec2 uCameraScale;
+            uniform mat4 uCameraMatrix;
             uniform vec2 uBackgroundScale;
             uniform mat4 uBackgroundMatrix;
             varying vec2 vCameraUv;
+            varying vec2 vMaskUv;
             varying vec2 vBackgroundUv;
             void main() {
                 gl_Position = aPosition;
-                vCameraUv = (aTexCoord - 0.5) * uCameraScale + 0.5;
+                // Upright (portrait, mirrored for selfie) coordinates; the mask is upright too.
+                vMaskUv = (aTexCoord - 0.5) * uCameraScale + 0.5;
+                // The camera texture is in sensor orientation.
+                vCameraUv = (uCameraMatrix * vec4(vMaskUv, 0.0, 1.0)).xy;
                 vec2 backgroundUv = (aTexCoord - 0.5) * uBackgroundScale + 0.5;
                 vBackgroundUv = (uBackgroundMatrix * vec4(backgroundUv, 0.0, 1.0)).xy;
             }
@@ -81,12 +89,13 @@ class Programs {
         const val COMPOSITE_FRAGMENT = """
             precision mediump float;
             varying vec2 vCameraUv;
+            varying vec2 vMaskUv;
             varying vec2 vBackgroundUv;
             uniform sampler2D uCamera;
             uniform sampler2D uMask;
             uniform BACKGROUND_SAMPLER uBackground;
             void main() {
-                float person = smoothstep(0.3, 0.7, texture2D(uMask, vCameraUv).r);
+                float person = smoothstep(0.3, 0.7, texture2D(uMask, vMaskUv).r);
                 vec4 camera = texture2D(uCamera, vCameraUv);
                 vec4 background = texture2D(uBackground, vBackgroundUv);
                 gl_FragColor = mix(background, camera, person);
