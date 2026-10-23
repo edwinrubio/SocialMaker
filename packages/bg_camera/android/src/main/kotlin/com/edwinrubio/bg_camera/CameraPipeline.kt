@@ -2,11 +2,19 @@ package com.edwinrubio.bg_camera
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.SurfaceTexture
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.media.MediaCodecList
+import android.media.MediaFormat
 import android.util.Log
 import android.util.Size
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -22,45 +30,95 @@ import java.util.concurrent.Executors
 /** Person mask, one byte per pixel (255 = person), in upright orientation. */
 class Mask(val bytes: ByteBuffer, val width: Int, val height: Int)
 
+/** Recorded video size (portrait) and H.264 bit rate. Names match the Dart enum. */
+enum class OutputResolution(
+    val width: Int,
+    val height: Int,
+    val bitRate: Int,
+) {
+    p720(720, 1280, 6_000_000),
+    p1080(1080, 1920, 12_000_000),
+    p2160(2160, 3840, 40_000_000),
+    ;
+
+    companion object {
+        /** Sizes both the front camera and an H.264 encoder can handle. */
+        fun supported(context: Context): List<OutputResolution> {
+            val encoders =
+                MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.filter { info ->
+                    info.isEncoder && info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_AVC, true) }
+                }
+            val cameraSizes = frontCameraSizes(context)
+            val supported =
+                entries.filter { resolution ->
+                    val encoderOk =
+                        encoders.any {
+                            it
+                                .getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                                .videoCapabilities
+                                .isSizeSupported(resolution.width, resolution.height)
+                        }
+                    // Camera sizes are landscape.
+                    val cameraOk =
+                        cameraSizes.any {
+                            maxOf(it.width, it.height) >= resolution.height &&
+                                minOf(it.width, it.height) >= resolution.width
+                        }
+                    encoderOk && cameraOk
+                }
+            return supported.ifEmpty { listOf(p720) }
+        }
+
+        private fun frontCameraSizes(context: Context): List<Size> {
+            val manager = context.getSystemService(CameraManager::class.java) ?: return emptyList()
+            return manager.cameraIdList
+                .map(manager::getCameraCharacteristics)
+                .filter { it.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT }
+                .flatMap {
+                    it
+                        .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                        ?.getOutputSizes(SurfaceTexture::class.java)
+                        ?.toList()
+                        .orEmpty()
+                }
+        }
+    }
+}
+
 /**
- * Camera frames → (MediaPipe segmentation) → [GlRenderer], which composites them
- * over the background into the Flutter texture and, while recording, the encoder.
+ * The camera streams into [GlRenderer]'s GPU texture; a small analysis stream
+ * feeds the person segmentation only while a background is active.
  *
  * Public methods are called on the main thread.
  */
 class CameraPipeline(
     private val context: Context,
     textures: TextureRegistry,
+    val resolution: OutputResolution,
 ) : LifecycleOwner {
-    companion object {
-        const val OUTPUT_WIDTH = 720
-        const val OUTPUT_HEIGHT = 1280
-        private const val TAG = "bg_camera"
-    }
-
     private val lifecycleRegistry = LifecycleRegistry(this)
     override val lifecycle: Lifecycle get() = lifecycleRegistry
 
     private val producer = textures.createSurfaceProducer()
     val textureId: Long get() = producer.id()
 
-    private val renderer = GlRenderer(context, OUTPUT_WIDTH, OUTPUT_HEIGHT)
+    private val renderer = GlRenderer(context, resolution)
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var cameraProvider: ProcessCameraProvider? = null
+    private var camera: Camera? = null
     private var front = true
 
     @Volatile private var segmentationEnabled = false
     private var segmenter: PersonSegmenter? = null
     private var segmenterUnavailable = false
-    // Two bitmaps used alternately: some GPU drivers (the emulator's among them)
-    // read an uploaded bitmap after the upload call returns, so overwriting the
-    // same one for the next frame tears the image.
-    private val frameBitmaps = arrayOfNulls<Bitmap>(2)
-    private var frameIndex = 0
+    private var analysisBitmap: Bitmap? = null
 
-    fun start(front: Boolean, callback: (Exception?) -> Unit) {
+    fun start(
+        front: Boolean,
+        callback: (Exception?) -> Unit,
+    ) {
         this.front = front
-        producer.setSize(OUTPUT_WIDTH, OUTPUT_HEIGHT)
+        producer.setSize(renderer.previewWidth, renderer.previewHeight)
         producer.setCallback(
             object : TextureRegistry.SurfaceProducer.Callback {
                 override fun onSurfaceAvailable() = renderer.setPreviewSurface(producer.surface)
@@ -88,6 +146,11 @@ class CameraPipeline(
         bindCamera()
     }
 
+    /** [fraction] 0..1 across the camera's zoom range. */
+    fun setZoom(fraction: Float) {
+        camera?.cameraControl?.setLinearZoom(fraction.coerceIn(0f, 1f))
+    }
+
     fun setBackground(background: Background?) {
         segmentationEnabled = background != null
         renderer.setBackground(background)
@@ -111,6 +174,25 @@ class CameraPipeline(
 
     private fun bindCamera() {
         val provider = cameraProvider ?: return
+        val preview =
+            Preview
+                .Builder()
+                .setResolutionSelector(
+                    ResolutionSelector
+                        .Builder()
+                        .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                        .setResolutionStrategy(
+                            ResolutionStrategy(
+                                Size(resolution.height, resolution.width),
+                                ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER,
+                            ),
+                        ).build(),
+                ).build()
+        val mirror = front
+        preview.setSurfaceProvider(ContextCompat.getMainExecutor(context)) { request ->
+            renderer.provideCameraSurface(request, mirror)
+        }
+
         val analysis =
             ImageAnalysis
                 .Builder()
@@ -119,7 +201,7 @@ class CameraPipeline(
                         .Builder()
                         .setResolutionStrategy(
                             ResolutionStrategy(
-                                Size(OUTPUT_HEIGHT, OUTPUT_WIDTH),
+                                ANALYSIS_SIZE,
                                 ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
                             ),
                         ).build(),
@@ -130,70 +212,32 @@ class CameraPipeline(
 
         val selector = if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
         provider.unbindAll()
-        provider.bindToLifecycle(this, selector, analysis)
+        camera = provider.bindToLifecycle(this, selector, preview, analysis)
     }
-
-    private var statsStart = 0L
-    private var statsFrames = 0
-    private var statsDropped = 0
-    private var statsCopyNs = 0L
-    private var statsSegmentNs = 0L
 
     private fun analyze(image: ImageProxy) =
         image.use {
-            logStats()
-            statsFrames++
-            // Skip the frame while the renderer still draws the previous one: the
-            // bitmaps below are reused and must not change under it.
-            if (!renderer.tryAcquireFrame()) {
-                statsDropped++
-                return@use
-            }
+            if (!segmentationEnabled) return@use
             try {
-                val t0 = System.nanoTime()
                 val bitmap = copyToBitmap(it)
-                val t1 = System.nanoTime()
-                val rotation = it.imageInfo.rotationDegrees
-                val mask = if (segmentationEnabled) segment(bitmap, rotation, front) else null
-                statsCopyNs += t1 - t0
-                statsSegmentNs += System.nanoTime() - t1
-                renderer.submitFrame(CameraFrame(bitmap, rotation, front), mask)
+                val mask = segment(bitmap, it.imageInfo.rotationDegrees, front) ?: return@use
+                renderer.submitMask(mask)
             } catch (e: Exception) {
-                renderer.cancelFrame()
                 Log.w(TAG, "Analysis failed", e)
             }
         }
 
-    private fun logStats() {
-        val now = System.nanoTime()
-        if (now - statsStart < 2_000_000_000L) return
-        if (statsStart != 0L && statsFrames > 0) {
-            val drawn = (statsFrames - statsDropped).coerceAtLeast(1)
-            Log.d(
-                TAG,
-                "camera fps ${statsFrames * 1_000_000_000L / (now - statsStart)}, dropped $statsDropped, " +
-                    "copy ${statsCopyNs / drawn / 1000} us, segment ${statsSegmentNs / drawn / 1000} us",
-            )
-        }
-        statsStart = now
-        statsFrames = 0
-        statsDropped = 0
-        statsCopyNs = 0
-        statsSegmentNs = 0
-    }
-
     /** Copies the RGBA frame into a reused bitmap, in sensor orientation. */
     private fun copyToBitmap(image: ImageProxy): Bitmap {
         val plane = image.planes[0]
-        frameIndex = 1 - frameIndex
         if (plane.pixelStride != 4 || plane.rowStride != image.width * 4) {
-            return image.toBitmap().also { frameBitmaps[frameIndex] = it }
+            return image.toBitmap()
         }
         val bitmap =
-            frameBitmaps[frameIndex]?.takeIf { it.width == image.width && it.height == image.height }
+            analysisBitmap?.takeIf { it.width == image.width && it.height == image.height }
                 ?: Bitmap
                     .createBitmap(image.width, image.height, Bitmap.Config.ARGB_8888)
-                    .also { frameBitmaps[frameIndex] = it }
+                    .also { analysisBitmap = it }
         plane.buffer.rewind()
         bitmap.copyPixelsFromBuffer(plane.buffer)
         return bitmap
@@ -215,5 +259,12 @@ class CameraPipeline(
                 return null
             }
         return segmenter.segment(frame, rotationDegrees, mirror)
+    }
+
+    private companion object {
+        const val TAG = "bg_camera"
+
+        // The model works at 256 px; a small stream keeps segmentation cheap.
+        val ANALYSIS_SIZE = Size(640, 480)
     }
 }

@@ -40,7 +40,7 @@ class _FiltersSheetState extends State<_FiltersSheet> {
 
   Future<void> _choose(BackgroundType type) async {
     String? path;
-    if (type != BackgroundType.none) {
+    if (type == BackgroundType.image || type == BackgroundType.video) {
       final picker = ImagePicker();
       final file = type == BackgroundType.image
           ? await picker.pickImage(source: ImageSource.gallery)
@@ -92,7 +92,7 @@ class _FiltersSheetState extends State<_FiltersSheet> {
             ),
             const SizedBox(height: 16),
             Text(
-              'Quita el fondo detrás de ti y cámbialo por una foto o un video.',
+              'Quita o desenfoca el fondo detrás de ti, o cámbialo por una foto o un video.',
               style: Theme.of(context).textTheme.bodySmall
                   ?.copyWith(color: Colors.white60),
             ),
@@ -104,6 +104,7 @@ class _FiltersSheetState extends State<_FiltersSheet> {
                   (BackgroundType.none, Icons.block, 'Ninguno'),
                   (BackgroundType.image, Icons.image_outlined, 'Foto'),
                   (BackgroundType.video, Icons.movie_outlined, 'Video'),
+                  (BackgroundType.blur, Icons.blur_on, 'Desenfocar'),
                 ])
                   _FilterOption(
                     icon: icon,

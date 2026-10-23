@@ -24,6 +24,15 @@ void main() {
               };
             case 'mergeSegments':
               return '/tmp/out.mp4';
+            case 'supportedResolutions':
+              return ['p720', 'p1080'];
+            case 'transcribe':
+              return [
+                {'startMs': 0, 'endMs': 1200, 'text': 'Hola a todos'},
+                {'startMs': 1500, 'endMs': 2800, 'text': 'bienvenidos'},
+              ];
+            case 'burnSubtitles':
+              return '/tmp/subs.mp4';
           }
           return null;
         });
@@ -32,7 +41,7 @@ void main() {
   test('initialize returns preview info', () async {
     final info = await BgCamera().initialize(lens: CameraLens.back);
 
-    expect(calls.single.arguments, {'lens': 'back'});
+    expect(calls.single.arguments, {'lens': 'back', 'resolution': 'p1080'});
     expect(info.textureId, 7);
     expect(info.aspectRatio, 720 / 1280);
   });
@@ -55,5 +64,45 @@ void main() {
       'paths': ['/a.mp4', '/b.mp4'],
     });
     expect(merged, '/tmp/out.mp4');
+  });
+
+  test('supportedResolutions keeps known values in order', () async {
+    expect(await BgCamera().supportedResolutions(), [
+      VideoResolution.p720,
+      VideoResolution.p1080,
+    ]);
+  });
+
+  test('setZoom clamps the fraction', () async {
+    await BgCamera().setZoom(1.7);
+    expect(calls.single.arguments, {'fraction': 1.0});
+  });
+
+  test('transcribe parses captions and burnSubtitles sends them', () async {
+    final camera = BgCamera();
+    final captions = await camera.transcribe('/tmp/v.mp4', localeId: 'es-CO');
+
+    expect(captions, [
+      const Caption(
+        start: Duration.zero,
+        end: Duration(milliseconds: 1200),
+        text: 'Hola a todos',
+      ),
+      const Caption(
+        start: Duration(milliseconds: 1500),
+        end: Duration(milliseconds: 2800),
+        text: 'bienvenidos',
+      ),
+    ]);
+    expect(calls.first.arguments, {'path': '/tmp/v.mp4', 'locale': 'es-CO'});
+
+    final out = await camera.burnSubtitles('/tmp/v.mp4', [captions.first]);
+    expect(out, '/tmp/subs.mp4');
+    expect(calls.last.arguments, {
+      'path': '/tmp/v.mp4',
+      'captions': [
+        {'startMs': 0, 'endMs': 1200, 'text': 'Hola a todos'},
+      ],
+    });
   });
 }

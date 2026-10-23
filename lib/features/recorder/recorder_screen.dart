@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../export/export_screen.dart';
 import '../filters/filters_sheet.dart';
+import '../settings/settings_sheet.dart';
 import '../segments/segment_strip.dart';
 import 'record_button.dart';
 import 'recorder_controller.dart';
@@ -44,6 +45,16 @@ class _RecorderScreenState extends State<RecorderScreen>
     onBackground: (choice) =>
         _controller.setBackground(choice.type, path: choice.path),
   );
+
+  Future<void> _openSettings() async {
+    final choice = await showSettingsSheet(
+      context,
+      current: _controller.resolution,
+      supported: _controller.supportedResolutions,
+      fragmentCount: _controller.segments.length,
+    );
+    if (choice != null) await _controller.changeResolution(choice);
+  }
 
   void _finish() {
     Navigator.of(context).push(
@@ -130,6 +141,7 @@ class _RecorderScreenState extends State<RecorderScreen>
                 enabled: c.canRecord,
                 onStart: c.startSegment,
                 onStop: c.stopSegment,
+                onZoom: c.setZoom,
               ),
               _ControlButton(
                 icon: Icons.check_circle,
@@ -145,9 +157,23 @@ class _RecorderScreenState extends State<RecorderScreen>
             ],
           ),
           const SizedBox(height: 12),
-          _FiltersButton(
-            active: c.backgroundType != BackgroundType.none,
-            onPressed: idle && c.preview != null ? _openFilters : null,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _PillButton(
+                icon: Icons.auto_awesome,
+                label: 'Filtros',
+                active: c.backgroundType != BackgroundType.none,
+                onPressed: idle && c.preview != null ? _openFilters : null,
+              ),
+              const SizedBox(width: 8),
+              _PillButton(
+                icon: Icons.settings_outlined,
+                label: c.resolution.label,
+                tooltip: 'Configuración',
+                onPressed: idle && c.preview != null ? _openSettings : null,
+              ),
+            ],
           ),
         ],
       ),
@@ -208,33 +234,42 @@ class _ControlButton extends StatelessWidget {
   }
 }
 
-class _FiltersButton extends StatelessWidget {
-  const _FiltersButton({required this.active, required this.onPressed});
+class _PillButton extends StatelessWidget {
+  const _PillButton({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    this.active = false,
+    this.tooltip,
+  });
 
+  final IconData icon;
+  final String label;
   final bool active;
+  final String? tooltip;
   final VoidCallback? onPressed;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
+    final button = Material(
       color: Colors.black45,
       shape: const StadiumBorder(),
       child: InkWell(
         customBorder: const StadiumBorder(),
         onTap: onPressed,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                Icons.auto_awesome,
+                icon,
                 size: 20,
                 color: active ? const Color(0xFFFE2C55) : Colors.white,
               ),
               const SizedBox(width: 8),
               Text(
-                'Filtros',
+                label,
                 style: TextStyle(
                   color: onPressed == null ? Colors.white38 : Colors.white,
                 ),
@@ -244,6 +279,8 @@ class _FiltersButton extends StatelessWidget {
         ),
       ),
     );
+    final tooltip = this.tooltip;
+    return tooltip == null ? button : Tooltip(message: tooltip, child: button);
   }
 }
 

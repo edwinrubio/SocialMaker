@@ -3,4 +3,24 @@
   <uses-feature android:name="android.hardware.camera" android:required="true" />
   <uses-permission android:name="android.permission.CAMERA" />
   <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+  <!-- Apps we may hand the final video to (Android 11+ package visibility). -->
+  <queries>
+    <package android:name="com.zhiliaoapp.musically" />
+    <package android:name="com.ss.android.ugc.trill" />
+    <package android:name="com.instagram.android" />
+    <package android:name="com.google.android.youtube" />
+  </queries>
+
+  <application>
+    <provider
+      android:name="androidx.core.content.FileProvider"
+      android:authorities="${applicationId}.bg_camera.files"
+      android:exported="false"
+      android:grantUriPermissions="true">
+      <meta-data
+        android:name="android.support.FILE_PROVIDER_PATHS"
+        android:resource="@xml/bg_camera_file_paths" />
+    </provider>
+  </application>
 </manifest>

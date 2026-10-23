@@ -2,6 +2,17 @@ import 'package:bg_camera/bg_camera.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:social_maker/features/recorder/recorder_controller.dart';
+import 'package:social_maker/features/settings/settings_store.dart';
+
+class MemorySettingsStore implements SettingsStore {
+  final values = <String, String>{};
+
+  @override
+  Future<String?> read(String key) async => values[key];
+
+  @override
+  Future<void> write(String key, String value) async => values[key] = value;
+}
 
 /// Records fragments whose duration is set by the test.
 class FakeBgCamera implements BgCamera {
@@ -9,7 +20,34 @@ class FakeBgCamera implements BgCamera {
   Duration nextDuration = const Duration(seconds: 2);
   bool failNextStop = false;
   List<String>? mergedPaths;
+  List<VideoResolution> supported = const [
+    VideoResolution.p720,
+    VideoResolution.p1080,
+  ];
+  VideoResolution? initializedWith;
+  final zooms = <double>[];
+  final backgrounds = <BackgroundType>[];
+  int disposeCount = 0;
   int _count = 0;
+
+  @override
+  Future<List<VideoResolution>> supportedResolutions() async => supported;
+
+  @override
+  Future<void> setZoom(double fraction) async => zooms.add(fraction);
+
+  @override
+  Future<bool> subtitlesSupported() async => false;
+
+  @override
+  Future<List<Caption>> transcribe(
+    String path, {
+    required String localeId,
+  }) async => const [];
+
+  @override
+  Future<String> burnSubtitles(String path, List<Caption> captions) async =>
+      path;
 
   @override
   Future<bool> requestPermissions() async => grantPermissions;
@@ -17,7 +55,15 @@ class FakeBgCamera implements BgCamera {
   @override
   Future<CameraPreviewInfo> initialize({
     CameraLens lens = CameraLens.front,
-  }) async => const CameraPreviewInfo(textureId: 1, width: 720, height: 1280);
+    VideoResolution resolution = VideoResolution.p1080,
+  }) async {
+    initializedWith = resolution;
+    return CameraPreviewInfo(
+      textureId: 1,
+      width: resolution.width,
+      height: resolution.height,
+    );
+  }
 
   @override
   Future<void> startSegment() async {}
@@ -41,23 +87,27 @@ class FakeBgCamera implements BgCamera {
   }
 
   @override
-  Future<void> setBackground(BackgroundType type, {String? path}) async {}
+  Future<void> setBackground(BackgroundType type, {String? path}) async =>
+      backgrounds.add(type);
 
   @override
   Future<void> switchCamera() async {}
 
   @override
-  Future<void> dispose() async {}
+  Future<void> dispose() async => disposeCount++;
 }
 
 void main() {
   late FakeBgCamera camera;
+  late MemorySettingsStore settings;
   late RecorderController controller;
 
   setUp(() async {
     camera = FakeBgCamera();
+    settings = MemorySettingsStore();
     controller = RecorderController(
       camera: camera,
+      settings: settings,
       maxDuration: const Duration(seconds: 10),
     );
     await controller.initialize();
@@ -155,11 +205,53 @@ void main() {
 
   test('denied permissions leave no preview and an error', () async {
     final denied = FakeBgCamera()..grantPermissions = false;
-    final c = RecorderController(camera: denied);
+    final c = RecorderController(camera: denied, settings: settings);
     await c.initialize();
 
     expect(c.preview, isNull);
     expect(c.error, isNotNull);
     expect(c.canRecord, isFalse);
+  });
+
+  test('defaults to 1080p, or the saved resolution when supported', () async {
+    expect(camera.initializedWith, VideoResolution.p1080);
+
+    final saved = MemorySettingsStore()
+      ..values[RecorderController.resolutionKey] = 'p720';
+    final other = FakeBgCamera();
+    await RecorderController(camera: other, settings: saved).initialize();
+    expect(other.initializedWith, VideoResolution.p720);
+
+    final unsupported = MemorySettingsStore()
+      ..values[RecorderController.resolutionKey] = 'p2160';
+    final third = FakeBgCamera();
+    await RecorderController(camera: third, settings: unsupported).initialize();
+    expect(third.initializedWith, VideoResolution.p1080);
+  });
+
+  test('changing resolution clears fragments, saves it and reopens', () async {
+    await record(const Duration(seconds: 1));
+    await controller.setBackground(BackgroundType.blur);
+
+    await controller.changeResolution(VideoResolution.p720);
+
+    expect(controller.segments, isEmpty);
+    expect(settings.values[RecorderController.resolutionKey], 'p720');
+    expect(camera.disposeCount, 1);
+    expect(camera.initializedWith, VideoResolution.p720);
+    expect(controller.preview!.width, 720);
+    // The background survives reopening the camera.
+    expect(camera.backgrounds, [BackgroundType.blur, BackgroundType.blur]);
+  });
+
+  test('zoom ignores tiny changes and resets once', () {
+    controller
+      ..setZoom(0.5)
+      ..setZoom(0.505)
+      ..setZoom(0.6)
+      ..setZoom(1.4)
+      ..setZoom(0)
+      ..setZoom(0);
+    expect(camera.zooms, [0.5, 0.6, 1.0, 0]);
   });
 }

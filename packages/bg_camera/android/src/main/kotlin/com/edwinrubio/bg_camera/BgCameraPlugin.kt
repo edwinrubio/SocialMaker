@@ -3,10 +3,12 @@ package com.edwinrubio.bg_camera
 import android.Manifest
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import androidx.core.content.FileProvider
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -47,7 +49,19 @@ class BgCameraPlugin :
     ) {
         when (call.method) {
             "requestPermissions" -> requestPermissions(result)
-            "initialize" -> initialize(call.argument<String>("lens") != "back", result)
+            "supportedResolutions" -> result.success(OutputResolution.supported(context).map { it.name })
+            "initialize" -> {
+                val resolution =
+                    OutputResolution.entries.firstOrNull { it.name == call.argument<String>("resolution") }
+                        ?: OutputResolution.p1080
+                initialize(call.argument<String>("lens") != "back", resolution, result)
+            }
+            "setZoom" -> withPipeline(result) {
+                it.setZoom(call.argument<Double>("fraction")?.toFloat() ?: 0f)
+                result.success(null)
+            }
+            "subtitlesSupported" -> result.success(false)
+            "shareToApp" -> shareToApp(call.argument("path"), call.argument("app"), result)
             "setBackground" -> setBackground(call.argument("type"), call.argument("path"), result)
             "switchCamera" -> withPipeline(result) {
                 it.switchCamera()
@@ -143,10 +157,14 @@ class BgCameraPlugin :
         }
     }
 
-    private fun initialize(front: Boolean, result: Result) {
+    private fun initialize(
+        front: Boolean,
+        resolution: OutputResolution,
+        result: Result,
+    ) {
         dispose()
         Recordings.clear(context)
-        val pipeline = CameraPipeline(context, textures)
+        val pipeline = CameraPipeline(context, textures, resolution)
         this.pipeline = pipeline
         pipeline.start(front) { error ->
             if (error != null) {
@@ -156,8 +174,8 @@ class BgCameraPlugin :
                 result.success(
                     mapOf(
                         "textureId" to pipeline.textureId,
-                        "width" to CameraPipeline.OUTPUT_WIDTH,
-                        "height" to CameraPipeline.OUTPUT_HEIGHT,
+                        "width" to resolution.width,
+                        "height" to resolution.height,
                     ),
                 )
             }
@@ -177,6 +195,10 @@ class BgCameraPlugin :
                     }
                 }
             }
+            type == "blur" -> {
+                pipeline.setBackground(Background.Blur)
+                result.success(null)
+            }
             type == "video" && path != null -> {
                 pipeline.setBackground(Background.Video(Uri.fromFile(File(path))))
                 result.success(null)
@@ -185,6 +207,42 @@ class BgCameraPlugin :
                 pipeline.setBackground(null)
                 result.success(null)
             }
+        }
+    }
+
+    /** Sends the video to TikTok, Instagram or YouTube; the chooser if not installed. */
+    private fun shareToApp(
+        path: String?,
+        app: String?,
+        result: Result,
+    ) {
+        val activity = activityBinding?.activity
+        if (path == null || activity == null) {
+            result.error("share_failed", "Nothing to share", null)
+            return
+        }
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.bg_camera.files", File(path))
+        val send =
+            Intent(Intent.ACTION_SEND).apply {
+                type = "video/mp4"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        val installed =
+            SHARE_PACKAGES[app].orEmpty().firstOrNull { pkg ->
+                runCatching { context.packageManager.getPackageInfo(pkg, 0) }.isSuccess
+            }
+        val intent =
+            if (installed != null) {
+                send.setPackage(installed)
+            } else {
+                Intent.createChooser(send, null)
+            }
+        try {
+            activity.startActivity(intent)
+            result.success(installed != null || app == null)
+        } catch (e: Exception) {
+            result.error("share_failed", e.message, null)
         }
     }
 
@@ -205,5 +263,11 @@ class BgCameraPlugin :
     private companion object {
         const val PERMISSIONS_REQUEST_CODE = 0x6263
         val PERMISSIONS = listOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+        val SHARE_PACKAGES =
+            mapOf(
+                "tiktok" to listOf("com.zhiliaoapp.musically", "com.ss.android.ugc.trill"),
+                "instagram" to listOf("com.instagram.android"),
+                "youtube" to listOf("com.google.android.youtube"),
+            )
     }
 }

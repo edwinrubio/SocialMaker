@@ -25,6 +25,9 @@ sealed interface Background {
     class Video(
         val uri: Uri,
     ) : Background
+
+    /** The camera frame itself, blurred. */
+    object Blur : Background
 }
 
 /**

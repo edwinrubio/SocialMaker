@@ -5,20 +5,33 @@ import 'package:bg_camera/bg_camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../settings/settings_store.dart';
+
 /// State of a recording session: camera preview, the recorded fragments and
 /// the selected background.
 class RecorderController extends ChangeNotifier {
   RecorderController({
     BgCamera? camera,
+    SettingsStore? settings,
     this.maxDuration = const Duration(minutes: 10),
-  }) : camera = camera ?? BgCamera();
+  }) : camera = camera ?? BgCamera(),
+       settings = settings ?? PrefsSettingsStore();
+
+  static const resolutionKey = 'resolution';
 
   final BgCamera camera;
+  final SettingsStore settings;
   final Duration maxDuration;
 
   CameraPreviewInfo? preview;
   String? error;
   BackgroundType backgroundType = BackgroundType.none;
+  String? _backgroundPath;
+
+  VideoResolution resolution = VideoResolution.p1080;
+  List<VideoResolution> supportedResolutions = const [];
+
+  double _lastZoom = 0;
 
   final List<RecordedSegment> _segments = [];
   List<RecordedSegment> get segments => List.unmodifiable(_segments);
@@ -55,7 +68,14 @@ class RecorderController extends ChangeNotifier {
       return;
     }
     try {
-      preview = await camera.initialize();
+      if (supportedResolutions.isEmpty) {
+        supportedResolutions = await camera.supportedResolutions();
+        resolution = _pickResolution(await settings.read(resolutionKey));
+      }
+      preview = await camera.initialize(resolution: resolution);
+      if (backgroundType != BackgroundType.none) {
+        await camera.setBackground(backgroundType, path: _backgroundPath);
+      }
     } on PlatformException catch (e) {
       debugPrint('initialize failed: ${e.message}');
       error = 'No se pudo abrir la cámara o el micrófono.';
@@ -134,10 +154,33 @@ class RecorderController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Changes the output size. Fragments can only be merged at one size, so
+  /// the existing ones are deleted; ask the user before calling this.
+  Future<void> changeResolution(VideoResolution value) async {
+    if (value == resolution || _recording) return;
+    clearSegments();
+    resolution = value;
+    preview = null;
+    notifyListeners();
+    await settings.write(resolutionKey, value.name);
+    await camera.dispose();
+    await initialize();
+  }
+
+  /// Zoom while recording; [fraction] 0..1. Small changes are not sent.
+  void setZoom(double fraction) {
+    final value = fraction.clamp(0.0, 1.0);
+    if (value != 0 && (value - _lastZoom).abs() < 0.01) return;
+    if (value == 0 && _lastZoom == 0) return;
+    _lastZoom = value;
+    camera.setZoom(value);
+  }
+
   Future<void> setBackground(BackgroundType type, {String? path}) async {
     try {
       await camera.setBackground(type, path: path);
       backgroundType = type;
+      _backgroundPath = path;
       error = null;
     } on PlatformException catch (e) {
       error = e.message ?? 'No se pudo aplicar el fondo.';
@@ -163,6 +206,20 @@ class RecorderController extends ChangeNotifier {
     _stopwatch.stop();
     _limitTimer?.cancel();
     _ticker?.cancel();
+  }
+
+  /// The saved choice if this device supports it, else the best up to 1080p.
+  VideoResolution _pickResolution(String? saved) {
+    final supported = supportedResolutions.isEmpty
+        ? const [VideoResolution.p720]
+        : supportedResolutions;
+    for (final candidate in supported) {
+      if (candidate.name == saved) return candidate;
+    }
+    return supported.lastWhere(
+      (r) => r.index <= VideoResolution.p1080.index,
+      orElse: () => supported.first,
+    );
   }
 
   static void _deleteSegmentFiles(RecordedSegment segment) {
