@@ -2,12 +2,20 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>NSCameraUsageDescription</key>
+	<string>SocialMaker usa la cámara para grabar tus videos.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>SocialMaker usa el micrófono para grabar el audio de tus videos.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>SocialMaker abre tu galería para elegir una foto o un video de fondo.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>SocialMaker guarda tus videos en la galería.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Social Maker</string>
+	<string>SocialMaker</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

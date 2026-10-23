@@ -17,50 +17,50 @@
       "id": "grabacion-fragmentos",
       "nombre": "Grabación por fragmentos",
       "descripcion": "Preview de cámara; mantener presionado graba un fragmento, soltar lo corta. Barra segmentada con límite de 60 s.",
-      "estado": "pendiente",
+      "estado": "en-revision",
       "responsable": "Ejecutor-Flutter / Ejecutor-iOS / Ejecutor-Android",
       "criterio": "En dispositivo físico (iOS y Android): 3 presiones generan 3 archivos de video con audio y la barra muestra 3 segmentos.",
-      "bloqueo": null,
+      "bloqueo": "Falta verificar en dispositivo físico iOS y Android (no hay dispositivo conectado).",
       "actualizado": "2026-10-23"
     },
     {
       "id": "gestion-fragmentos",
       "nombre": "Gestión de fragmentos",
       "descripcion": "Revisar, reproducir y borrar fragmentos; botón 'borrar último' en la grabadora.",
-      "estado": "pendiente",
+      "estado": "en-revision",
       "responsable": "Ejecutor-Flutter",
       "criterio": "Se puede reproducir cada fragmento y borrar cualquiera; la duración total se actualiza.",
-      "bloqueo": null,
+      "bloqueo": "Falta verificar en dispositivo físico iOS y Android (no hay dispositivo conectado).",
       "actualizado": "2026-10-23"
     },
     {
       "id": "exportar",
       "nombre": "Exportar video",
       "descripcion": "Unir los fragmentos que quedan (merge nativo), previsualizar y guardar en galería.",
-      "estado": "pendiente",
+      "estado": "en-revision",
       "responsable": "Ejecutor-iOS / Ejecutor-Android",
       "criterio": "3 fragmentos, borrar el del medio, exportar: el video final tiene 2 en orden, con audio, y aparece en la galería.",
-      "bloqueo": null,
+      "bloqueo": "Falta verificar en dispositivo físico iOS y Android (no hay dispositivo conectado).",
       "actualizado": "2026-10-23"
     },
     {
       "id": "fondo-foto",
       "nombre": "Fondo virtual con foto",
       "descripcion": "Segmentar a la persona y reemplazar el fondo por una foto elegida, en preview y en la grabación.",
-      "estado": "pendiente",
+      "estado": "en-revision",
       "responsable": "Ejecutor-iOS / Ejecutor-Android",
       "criterio": "Con una foto de fondo, la persona aparece sobre la foto en el preview y en el archivo exportado.",
-      "bloqueo": null,
+      "bloqueo": "Falta verificar en dispositivo físico iOS y Android (no hay dispositivo conectado).",
       "actualizado": "2026-10-23"
     },
     {
       "id": "fondo-video",
       "nombre": "Fondo virtual con video",
       "descripcion": "Igual que fondo-foto pero con un video en loop.",
-      "estado": "pendiente",
+      "estado": "en-revision",
       "responsable": "Ejecutor-iOS / Ejecutor-Android",
       "criterio": "Con un video de fondo, la persona aparece sobre el video en movimiento en preview y exportado.",
-      "bloqueo": null,
+      "bloqueo": "Falta verificar en dispositivo físico iOS y Android (no hay dispositivo conectado).",
       "actualizado": "2026-10-23"
     }
   ]

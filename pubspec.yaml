@@ -36,6 +36,10 @@ dependencies:
   cupertino_icons: ^1.0.8
   bg_camera:
     path: packages/bg_camera
+  video_player: ^2.14.1
+  path_provider: ^2.1.6
+  image_picker: ^1.2.4
+  gal: ^2.3.3
 
 dev_dependencies:
   flutter_test:
