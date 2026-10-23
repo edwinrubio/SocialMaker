@@ -93,10 +93,18 @@ void main() {
 
     await tester.tap(find.bySemanticsLabel(RegExp('^Fragmento 2')));
     await wait(tester, const Duration(seconds: 1));
-    expect(find.text('Borrar fragmento'), findsOneWidget);
+    expect(find.text('Borrar'), findsOneWidget);
     await step(tester, 'viewer-2');
 
-    await tester.tap(find.text('Borrar fragmento'));
+    // Drag the scrubber to about the middle of the fragment.
+    final scrubber = find.byKey(const Key('segment-scrubber'));
+    await tester.drag(scrubber, const Offset(60, 0));
+    await wait(tester, const Duration(seconds: 1));
+    final slider = tester.widget<Slider>(scrubber);
+    expect(slider.value, greaterThan(0), reason: 'scrubbing did not seek');
+    await step(tester, 'scrubbed-2');
+
+    await tester.tap(find.text('Borrar'));
     await wait(tester, const Duration(seconds: 1));
     expect(find.bySemanticsLabel(RegExp('^Fragmento 3')), findsNothing);
     await step(tester, 'deleted-2');
