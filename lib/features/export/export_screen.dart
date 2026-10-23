@@ -305,18 +305,27 @@ class _ExportScreenState extends State<ExportScreen> {
             )
           : Row(
               children: [
-                const Icon(Icons.closed_caption_outlined),
-                const SizedBox(width: 8),
-                const Expanded(child: Text('Subtítulos')),
-                TextButton(
-                  onPressed: _busy ? null : _editCaptions,
-                  child: const Text('Editar'),
+                Expanded(
+                  child: SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    secondary: const Icon(Icons.closed_caption_outlined),
+                    title: const Text('Subtítulos en el video'),
+                    subtitle: Text(
+                      _includeCaptions
+                          ? 'Se verán en el video que guardes o compartas.'
+                          : 'El video se guardará sin subtítulos.',
+                      style: const TextStyle(color: Colors.white60),
+                    ),
+                    value: _includeCaptions,
+                    onChanged: _busy
+                        ? null
+                        : (value) => setState(() => _includeCaptions = value),
+                  ),
                 ),
-                Switch(
-                  value: _includeCaptions,
-                  onChanged: _busy
-                      ? null
-                      : (value) => setState(() => _includeCaptions = value),
+                TextButton.icon(
+                  onPressed: _busy ? null : _editCaptions,
+                  icon: const Icon(Icons.edit_outlined, size: 18),
+                  label: const Text('Editar texto'),
                 ),
               ],
             ),

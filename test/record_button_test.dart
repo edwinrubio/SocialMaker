@@ -85,4 +85,18 @@ void main() {
     await press(tester, const Duration(milliseconds: 100));
     expect((starts, stops), (2, 0));
   });
+
+  testWidgets('the core turns into a small square while recording', (
+    tester,
+  ) async {
+    await tester.pumpWidget(button());
+    final idle = tester.getSize(find.byKey(const Key('record-button-core')));
+
+    await press(tester, const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 400));
+    final recordingSize = tester.getSize(
+      find.byKey(const Key('record-button-core')),
+    );
+    expect(recordingSize.width, lessThan(idle.width / 1.5));
+  });
 }

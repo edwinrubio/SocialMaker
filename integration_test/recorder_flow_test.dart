@@ -92,9 +92,11 @@ void main() {
     await step(tester, 'three-fragments');
 
     await tester.tap(find.bySemanticsLabel(RegExp('^Fragmento 2')));
-    await step(tester, 'selected-2');
+    await wait(tester, const Duration(seconds: 1));
+    expect(find.text('Borrar fragmento'), findsOneWidget);
+    await step(tester, 'viewer-2');
 
-    await tester.tap(find.byIcon(Icons.backspace_outlined));
+    await tester.tap(find.text('Borrar fragmento'));
     await wait(tester, const Duration(seconds: 1));
     expect(find.bySemanticsLabel(RegExp('^Fragmento 3')), findsNothing);
     await step(tester, 'deleted-2');
@@ -142,12 +144,16 @@ void main() {
       await tester.tap(find.text('Generar subtítulos con IA'));
       for (
         var i = 0;
-        i < 120 && find.text('Subtítulos').evaluate().isEmpty;
+        i < 120 && find.text('Subtítulos en el video').evaluate().isEmpty;
         i++
       ) {
         await wait(tester, const Duration(seconds: 1));
       }
-      expect(find.text('Subtítulos'), findsOneWidget, reason: 'no captions');
+      expect(
+        find.text('Subtítulos en el video'),
+        findsOneWidget,
+        reason: 'no captions',
+      );
       await step(tester, 'captions');
       captions = groupWords(
         await camera.transcribe(merged.first.path, localeId: 'es-MX'),

@@ -5,6 +5,7 @@ import '../export/export_screen.dart';
 import '../filters/filters_sheet.dart';
 import '../settings/settings_sheet.dart';
 import '../segments/segment_strip.dart';
+import '../segments/segment_viewer.dart';
 import 'record_button.dart';
 import 'recorder_controller.dart';
 import 'segment_bar.dart';
@@ -47,6 +48,19 @@ class _RecorderScreenState extends State<RecorderScreen>
     blurStrength: _controller.blurStrength,
     onBlurStrength: _controller.setBlurStrength,
   );
+
+  /// Shows the fragment full screen (highlighted in the strip meanwhile);
+  /// the user keeps or deletes it there.
+  Future<void> _openSegment(int index) async {
+    final c = _controller;
+    if (c.selectedIndex != index) c.toggleSelection(index);
+    final delete = await showSegmentViewer(context, c.segments[index], index);
+    if (delete) {
+      c.removeSegmentAt(index);
+    } else if (c.selectedIndex == index) {
+      c.toggleSelection(index);
+    }
+  }
 
   Future<void> _openSettings() async {
     final choice = await showSettingsSheet(
@@ -121,7 +135,7 @@ class _RecorderScreenState extends State<RecorderScreen>
             SegmentStrip(
               segments: c.segments,
               selectedIndex: c.selectedIndex,
-              onTap: idle ? c.toggleSelection : (_) {},
+              onTap: idle ? _openSegment : (_) {},
             ),
             const SizedBox(height: 12),
           ],
