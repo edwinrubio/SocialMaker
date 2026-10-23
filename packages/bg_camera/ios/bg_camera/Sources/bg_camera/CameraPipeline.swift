@@ -76,7 +76,6 @@ final class CameraPipeline: NSObject, FlutterTexture,
     request.outputPixelFormat = kCVPixelFormatType_OneComponent8
     return request
   }()
-  private let sequenceHandler = VNSequenceRequestHandler()
   private var bufferPool: CVPixelBufferPool?
 
   private let latestLock = NSLock()
@@ -302,9 +301,11 @@ final class CameraPipeline: NSObject, FlutterTexture,
     if let background = _background,
       let backgroundImage = background.image(for: extent, camera: camera)
     {
-      try? sequenceHandler.perform([segmentation], on: cameraBuffer)
+      // A fresh handler per frame: VNSequenceRequestHandler smooths the mask
+      // over time, which leaves a ghost of the previous pose when moving.
+      try? VNImageRequestHandler(cvPixelBuffer: cameraBuffer).perform([segmentation])
       if let maskBuffer = segmentation.results?.first?.pixelBuffer {
-        let mask = CIImage(cvPixelBuffer: maskBuffer).aspectFilled(to: extent)
+        let mask = Self.refined(CIImage(cvPixelBuffer: maskBuffer)).aspectFilled(to: extent)
         image = camera.applyingFilter(
           "CIBlendWithMask",
           parameters: [kCIInputBackgroundImageKey: backgroundImage, kCIInputMaskImageKey: mask])
@@ -314,6 +315,15 @@ final class CameraPipeline: NSObject, FlutterTexture,
     guard let output = makeOutputBuffer() else { return nil }
     ciContext.render(image.cropped(to: extent), to: output)
     return output
+  }
+
+  /// Pulls the mask's edge slightly inside the person and softens it, so no
+  /// rim of the real background shows around the silhouette.
+  private static func refined(_ mask: CIImage) -> CIImage {
+    mask.applyingFilter("CIMorphologyMinimum", parameters: [kCIInputRadiusKey: 1])
+      .clampedToExtent()
+      .applyingGaussianBlur(sigma: 1)
+      .cropped(to: mask.extent)
   }
 
   private func makeOutputBuffer() -> CVPixelBuffer? {

@@ -44,6 +44,8 @@ class _RecorderScreenState extends State<RecorderScreen>
     current: _controller.backgroundType,
     onBackground: (choice) =>
         _controller.setBackground(choice.type, path: choice.path),
+    blurStrength: _controller.blurStrength,
+    onBlurStrength: _controller.setBlurStrength,
   );
 
   Future<void> _openSettings() async {

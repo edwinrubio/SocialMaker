@@ -149,9 +149,11 @@ class GlRenderer(
 
     fun setBackground(background: Background?) =
         handler.post {
+            // Only the blur strength changed: the current mask still applies.
+            val sameMask = this.background is Background.Blur && background is Background.Blur
             releaseBackground()
             this.background = background
-            hasMask = false
+            if (!sameMask) hasMask = false
             when (background) {
                 is Background.Image -> {
                     backgroundTexture = createTexture(GLES20.GL_TEXTURE_2D)
@@ -163,7 +165,7 @@ class GlRenderer(
                     backgroundTexture = createTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES)
                     videoBackground = VideoBackground(context, background.uri, backgroundTexture)
                 }
-                Background.Blur, null -> Unit
+                is Background.Blur, null -> Unit
             }
         }
 
@@ -298,8 +300,8 @@ class GlRenderer(
                     fillScale(backgroundImageSize.first, backgroundImageSize.second)
                 return programs.compositeImage
             }
-            Background.Blur -> {
-                val blurred = renderBlurredCamera(cameraScale)
+            is Background.Blur -> {
+                val blurred = renderBlurredCamera(cameraScale, background.strength)
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, blurred)
                 // The blurred frame is already upright and covers the output.
@@ -329,7 +331,10 @@ class GlRenderer(
      * Draws the upright camera frame small and blurs it in each direction;
      * returns the texture holding the result.
      */
-    private fun renderBlurredCamera(cameraScale: FloatArray): Int {
+    private fun renderBlurredCamera(
+        cameraScale: FloatArray,
+        strength: Float,
+    ): Int {
         val (a, b) = blurTargets ?: arrayOf(RenderTarget(BLUR_WIDTH, BLUR_HEIGHT), RenderTarget(BLUR_WIDTH, BLUR_HEIGHT))
             .also { blurTargets = it }
 
@@ -338,10 +343,12 @@ class GlRenderer(
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
 
         val blur = programs.blur
-        repeat(BLUR_ITERATIONS) {
+        // A second pass only for strong blur: wide spacing alone would band.
+        val spread = BLUR_MIN_SPREAD + strength * BLUR_SPREAD_RANGE
+        repeat(if (strength > 0.6f) 2 else 1) {
             for ((source, target, step) in listOf(
-                Triple(a, b, floatArrayOf(BLUR_SPREAD / BLUR_WIDTH, 0f)),
-                Triple(b, a, floatArrayOf(0f, BLUR_SPREAD / BLUR_HEIGHT)),
+                Triple(a, b, floatArrayOf(spread / BLUR_WIDTH, 0f)),
+                Triple(b, a, floatArrayOf(0f, spread / BLUR_HEIGHT)),
             )) {
                 target.bind()
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE3)
@@ -474,10 +481,10 @@ class GlRenderer(
         // The blurred background is drawn tiny; its size doesn't depend on the output.
         const val BLUR_WIDTH = 180
         const val BLUR_HEIGHT = 320
-        const val BLUR_ITERATIONS = 1
-
-        // Sample spacing in texels: wider spacing blurs more in one pass.
-        const val BLUR_SPREAD = 2f
+        // Sample spacing in texels (wider blurs more in one pass): 0.5 at
+        // strength 0, 2 at the default 0.5, 3.5 at 1.
+        const val BLUR_MIN_SPREAD = 0.5f
+        const val BLUR_SPREAD_RANGE = 3f
 
         val ONE = floatArrayOf(1f, 1f)
         val IDENTITY = FloatArray(16).also { Matrix.setIdentityM(it, 0) }

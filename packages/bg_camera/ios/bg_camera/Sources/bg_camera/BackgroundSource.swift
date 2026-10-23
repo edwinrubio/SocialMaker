@@ -13,11 +13,19 @@ protocol BackgroundSource: AnyObject {
 final class BlurBackground: BackgroundSource {
   private static let workingHeight: CGFloat = 320
 
+  /// Gaussian sigma at the working size.
+  private let sigma: Double
+
+  /// [strength] goes from 0 (subtle) to 1 (strong).
+  init(strength: Double) {
+    sigma = 2 + min(max(strength, 0), 1) * 18
+  }
+
   func image(for extent: CGRect, camera: CIImage) -> CIImage? {
     let scale = Self.workingHeight / extent.height
     let small = camera.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
     return small.clampedToExtent()
-      .applyingGaussianBlur(sigma: 10)
+      .applyingGaussianBlur(sigma: sigma)
       .cropped(to: small.extent)
       .transformed(by: CGAffineTransform(scaleX: 1 / scale, y: 1 / scale))
       .cropped(to: extent)

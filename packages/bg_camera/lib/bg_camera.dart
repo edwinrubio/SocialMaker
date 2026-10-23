@@ -131,7 +131,12 @@ class BgCamera {
   }
 
   /// [path] is required for [BackgroundType.image] and [BackgroundType.video].
-  Future<void> setBackground(BackgroundType type, {String? path}) {
+  /// [blurStrength] (0 subtle to 1 strong) applies to [BackgroundType.blur].
+  Future<void> setBackground(
+    BackgroundType type, {
+    String? path,
+    double blurStrength = 0.5,
+  }) {
     assert(
       type == BackgroundType.none ||
           type == BackgroundType.blur ||
@@ -140,6 +145,7 @@ class BgCamera {
     return _channel.invokeMethod<void>('setBackground', {
       'type': type.name,
       'path': path,
+      'blurStrength': blurStrength.clamp(0.0, 1.0),
     });
   }
 

@@ -11,23 +11,40 @@ Future<void> showFiltersSheet(
   BuildContext context, {
   required BackgroundType current,
   required Future<void> Function(BackgroundChoice choice) onBackground,
+  required double blurStrength,
+  required BlurStrengthCallback onBlurStrength,
 }) {
   return showModalBottomSheet<void>(
     context: context,
     backgroundColor: const Color(0xEE161616),
     barrierColor: Colors.transparent,
     showDragHandle: true,
-    builder: (_) => _FiltersSheet(current: current, onBackground: onBackground),
+    builder: (_) => _FiltersSheet(
+      current: current,
+      onBackground: onBackground,
+      blurStrength: blurStrength,
+      onBlurStrength: onBlurStrength,
+    ),
   );
 }
+
+/// Called while the blur slider moves, and with [done] when released.
+typedef BlurStrengthCallback = Future<void> Function(double value, {bool done});
 
 enum _Category { backgrounds }
 
 class _FiltersSheet extends StatefulWidget {
-  const _FiltersSheet({required this.current, required this.onBackground});
+  const _FiltersSheet({
+    required this.current,
+    required this.onBackground,
+    required this.blurStrength,
+    required this.onBlurStrength,
+  });
 
   final BackgroundType current;
   final Future<void> Function(BackgroundChoice choice) onBackground;
+  final double blurStrength;
+  final BlurStrengthCallback onBlurStrength;
 
   @override
   State<_FiltersSheet> createState() => _FiltersSheetState();
@@ -35,6 +52,7 @@ class _FiltersSheet extends StatefulWidget {
 
 class _FiltersSheetState extends State<_FiltersSheet> {
   late BackgroundType _selected = widget.current;
+  late double _blurStrength = widget.blurStrength;
   final _category = _Category.backgrounds;
   bool _applying = false;
 
@@ -114,6 +132,30 @@ class _FiltersSheetState extends State<_FiltersSheet> {
                   ),
               ],
             ),
+            if (_selected == BackgroundType.blur) ...[
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  const Icon(Icons.blur_linear, size: 20),
+                  Expanded(
+                    child: Slider(
+                      key: const Key('blur-strength'),
+                      value: _blurStrength,
+                      activeColor: const Color(0xFFFE2C55),
+                      semanticFormatterCallback: (v) =>
+                          'Desenfoque ${(v * 100).round()} %',
+                      onChanged: (value) {
+                        setState(() => _blurStrength = value);
+                        widget.onBlurStrength(value);
+                      },
+                      onChangeEnd: (value) =>
+                          widget.onBlurStrength(value, done: true),
+                    ),
+                  ),
+                  const Icon(Icons.blur_on, size: 24),
+                ],
+              ),
+            ],
           ],
         ),
       ),

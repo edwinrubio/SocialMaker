@@ -27,6 +27,7 @@ class FakeBgCamera implements BgCamera {
   VideoResolution? initializedWith;
   final zooms = <double>[];
   final backgrounds = <BackgroundType>[];
+  final blurStrengths = <double>[];
   int disposeCount = 0;
   int _count = 0;
 
@@ -90,8 +91,14 @@ class FakeBgCamera implements BgCamera {
   }
 
   @override
-  Future<void> setBackground(BackgroundType type, {String? path}) async =>
-      backgrounds.add(type);
+  Future<void> setBackground(
+    BackgroundType type, {
+    String? path,
+    double blurStrength = 0.5,
+  }) async {
+    backgrounds.add(type);
+    blurStrengths.add(blurStrength);
+  }
 
   @override
   Future<void> switchCamera() async {}
@@ -230,6 +237,18 @@ void main() {
     final third = FakeBgCamera();
     await RecorderController(camera: third, settings: unsupported).initialize();
     expect(third.initializedWith, VideoResolution.p1080);
+  });
+
+  test('blur strength applies live and is remembered on release', () async {
+    await controller.setBackground(BackgroundType.blur);
+    camera.blurStrengths.clear();
+
+    await controller.setBlurStrength(0.51); // too small a step
+    await controller.setBlurStrength(0.8);
+    await controller.setBlurStrength(0.8, done: true);
+
+    expect(camera.blurStrengths, [0.8, 0.8]);
+    expect(settings.values[RecorderController.blurStrengthKey], '0.8');
   });
 
   test('changing resolution clears fragments, saves it and reopens', () async {

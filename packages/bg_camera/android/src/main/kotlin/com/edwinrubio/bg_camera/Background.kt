@@ -26,8 +26,10 @@ sealed interface Background {
         val uri: Uri,
     ) : Background
 
-    /** The camera frame itself, blurred. */
-    object Blur : Background
+    /** The camera frame itself, blurred; [strength] from 0 (subtle) to 1 (strong). */
+    class Blur(
+        val strength: Float,
+    ) : Background
 }
 
 /**

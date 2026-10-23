@@ -62,7 +62,13 @@ class BgCameraPlugin :
             }
             "subtitlesSupported" -> result.success(false)
             "shareToApp" -> shareToApp(call.argument("path"), call.argument("app"), result)
-            "setBackground" -> setBackground(call.argument("type"), call.argument("path"), result)
+            "setBackground" ->
+                setBackground(
+                    call.argument("type"),
+                    call.argument("path"),
+                    call.argument<Double>("blurStrength") ?: 0.5,
+                    result,
+                )
             "switchCamera" -> withPipeline(result) {
                 it.switchCamera()
                 result.success(null)
@@ -182,7 +188,12 @@ class BgCameraPlugin :
         }
     }
 
-    private fun setBackground(type: String?, path: String?, result: Result) = withPipeline(result) { pipeline ->
+    private fun setBackground(
+        type: String?,
+        path: String?,
+        blurStrength: Double,
+        result: Result,
+    ) = withPipeline(result) { pipeline ->
         when {
             type == "image" && path != null -> worker.execute {
                 val bitmap = BitmapLoader.load(File(path), maxSide = 1920)
@@ -196,7 +207,7 @@ class BgCameraPlugin :
                 }
             }
             type == "blur" -> {
-                pipeline.setBackground(Background.Blur)
+                pipeline.setBackground(Background.Blur(blurStrength.toFloat()))
                 result.success(null)
             }
             type == "video" && path != null -> {

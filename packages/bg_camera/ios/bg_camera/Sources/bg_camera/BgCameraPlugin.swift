@@ -51,7 +51,9 @@ public class BgCameraPlugin: NSObject, FlutterPlugin {
     case "burnSubtitles":
       burnSubtitles(path: args["path"] as? String, captions: args["captions"] as? [[String: Any]], result: result)
     case "setBackground":
-      setBackground(type: args["type"] as? String ?? "none", path: args["path"] as? String, result: result)
+      setBackground(
+        type: args["type"] as? String ?? "none", path: args["path"] as? String,
+        blurStrength: args["blurStrength"] as? Double ?? 0.5, result: result)
     case "switchCamera":
       withPipeline(result) { $0.switchCamera(); result(nil) }
     case "startSegment":
@@ -117,7 +119,9 @@ public class BgCameraPlugin: NSObject, FlutterPlugin {
     ])
   }
 
-  private func setBackground(type: String, path: String?, result: @escaping FlutterResult) {
+  private func setBackground(
+    type: String, path: String?, blurStrength: Double, result: @escaping FlutterResult
+  ) {
     withPipeline(result) { pipeline in
       let url = path.map { URL(fileURLWithPath: $0) }
       switch (type, url) {
@@ -130,7 +134,7 @@ public class BgCameraPlugin: NSObject, FlutterPlugin {
       case ("video", let url?):
         pipeline.background = VideoBackground(url: url)
       case ("blur", _):
-        pipeline.background = BlurBackground()
+        pipeline.background = BlurBackground(strength: blurStrength)
       default:
         pipeline.background = nil
       }

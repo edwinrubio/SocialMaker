@@ -18,6 +18,7 @@ class RecorderController extends ChangeNotifier {
        settings = settings ?? PrefsSettingsStore();
 
   static const resolutionKey = 'resolution';
+  static const blurStrengthKey = 'blur-strength';
 
   final BgCamera camera;
   final SettingsStore settings;
@@ -27,6 +28,9 @@ class RecorderController extends ChangeNotifier {
   String? error;
   BackgroundType backgroundType = BackgroundType.none;
   String? _backgroundPath;
+
+  /// 0 (subtle) to 1 (strong), for [BackgroundType.blur].
+  double blurStrength = 0.5;
 
   VideoResolution resolution = VideoResolution.p1080;
   List<VideoResolution> supportedResolutions = const [];
@@ -71,10 +75,17 @@ class RecorderController extends ChangeNotifier {
       if (supportedResolutions.isEmpty) {
         supportedResolutions = await camera.supportedResolutions();
         resolution = _pickResolution(await settings.read(resolutionKey));
+        blurStrength =
+            double.tryParse(await settings.read(blurStrengthKey) ?? '') ??
+            blurStrength;
       }
       preview = await camera.initialize(resolution: resolution);
       if (backgroundType != BackgroundType.none) {
-        await camera.setBackground(backgroundType, path: _backgroundPath);
+        await camera.setBackground(
+          backgroundType,
+          path: _backgroundPath,
+          blurStrength: blurStrength,
+        );
       }
     } on PlatformException catch (e) {
       debugPrint('initialize failed: ${e.message}');
@@ -178,7 +189,7 @@ class RecorderController extends ChangeNotifier {
 
   Future<void> setBackground(BackgroundType type, {String? path}) async {
     try {
-      await camera.setBackground(type, path: path);
+      await camera.setBackground(type, path: path, blurStrength: blurStrength);
       backgroundType = type;
       _backgroundPath = path;
       error = null;
@@ -186,6 +197,22 @@ class RecorderController extends ChangeNotifier {
       error = e.message ?? 'No se pudo aplicar el fondo.';
     }
     notifyListeners();
+  }
+
+  /// Applies a new blur level live while the slider moves (skipping tiny
+  /// steps); with [done], also remembers it.
+  Future<void> setBlurStrength(double value, {bool done = false}) async {
+    final changed = (value - blurStrength).abs() >= 0.02;
+    if (changed || done) {
+      blurStrength = value;
+      if (backgroundType == BackgroundType.blur) {
+        await camera.setBackground(
+          BackgroundType.blur,
+          blurStrength: blurStrength,
+        );
+      }
+    }
+    if (done) await settings.write(blurStrengthKey, value.toString());
   }
 
   Future<void> switchCamera() => camera.switchCamera();
