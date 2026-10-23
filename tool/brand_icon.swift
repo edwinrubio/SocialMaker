@@ -5,7 +5,7 @@
 // Writes icon.png (full app icon, opaque), foreground.png (Android adaptive
 // foreground, transparent), monochrome.png (Android themed icon) and
 // logo.png and splash_android12.png (splash marks, transparent), all
-// 1024×1024.
+// 1024×1024, plus feature_graphic.png (Google Play, 1024×500).
 import AppKit
 import CoreGraphics
 
@@ -97,9 +97,12 @@ func drawBackground(_ ctx: CGContext) {
     endCenter: CGPoint(x: size / 2, y: size / 2), endRadius: size * 0.55, options: [])
 }
 
-func render(_ name: String, opaque: Bool, _ draw: (CGContext) -> Void) {
+func render(
+  _ name: String, opaque: Bool, width: Int = Int(size), height: Int = Int(size),
+  _ draw: (CGContext) -> Void
+) {
   let ctx = CGContext(
-    data: nil, width: Int(size), height: Int(size), bitsPerComponent: 8, bytesPerRow: 0, space: space,
+    data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
     bitmapInfo: opaque ? CGImageAlphaInfo.noneSkipLast.rawValue : CGImageAlphaInfo.premultipliedLast.rawValue)!
   draw(ctx)
   let rep = NSBitmapImageRep(cgImage: ctx.makeImage()!)
@@ -115,3 +118,29 @@ render("monochrome.png", opaque: false) { drawMark($0, scale: 0.86, solid: CGCol
 // Android 12+ splash shows the icon in a circle two thirds of its size.
 render("splash_android12.png", opaque: false) { drawMark($0, scale: 0.6) }
 render("logo.png", opaque: false) { drawMark($0, scale: 0.95) }
+
+// Google Play feature graphic: mark on the left, name and tagline on the right.
+render("feature_graphic.png", opaque: true, width: 1024, height: 500) { ctx in
+  ctx.drawLinearGradient(
+    gradient([plumTop, plumBottom]), start: CGPoint(x: 0, y: 500), end: CGPoint(x: 1024, y: 0), options: [])
+  ctx.saveGState()
+  // The mark is drawn on a 1024 canvas: fit it into 380 px on the left.
+  ctx.translateBy(x: 40, y: 60)
+  ctx.scaleBy(x: 380 / size, y: 380 / size)
+  drawMark(ctx, scale: 0.95)
+  ctx.restoreGState()
+
+  NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+  let lines: [(String, NSFont, NSColor, CGFloat)] = [
+    ("SocialMaker", .systemFont(ofSize: 88, weight: .heavy), .white, 270),
+    ("Graba por fragmentos.", .systemFont(ofSize: 40, weight: .semibold),
+     NSColor(srgbRed: 1, green: 0x8A / 255, blue: 0x3D / 255, alpha: 1), 200),
+    ("Fondo, desenfoque y subtítulos.", .systemFont(ofSize: 32, weight: .regular),
+     NSColor(white: 0.8, alpha: 1), 150),
+  ]
+  for (text, font, color, y) in lines {
+    NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color])
+      .draw(at: CGPoint(x: 460, y: y))
+  }
+  NSGraphicsContext.current = nil
+}

@@ -92,9 +92,13 @@ enum Transcriber {
       recognizer.isAvailable
     else { throw TranscriptionError.unsupportedLocale(locale.identifier) }
 
+    // Never send the user's voice to Apple's servers.
+    guard recognizer.supportsOnDeviceRecognition else {
+      throw TranscriptionError.unsupportedLocale(locale.identifier)
+    }
     let request = SFSpeechURLRecognitionRequest(url: audio)
     request.shouldReportPartialResults = false
-    request.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
+    request.requiresOnDeviceRecognition = true
     if #available(iOS 16.0, *) { request.addsPunctuation = true }
 
     return try await withCheckedThrowingContinuation { continuation in

@@ -11,6 +11,7 @@ Fuente única: `tool/brand_icon.swift` (Core Graphics, sin herramientas de dise�
 | `foreground.png` / `monochrome.png` | Ícono adaptable de Android y ícono temático (Android 13+) |
 | `logo.png` | Splash (iOS y Android < 12) |
 | `splash_android12.png` | Splash de Android 12+ |
+| `feature_graphic.png` | Gráfico destacado de Play (copiarlo a `docs/store/`) |
 
 Regenerar:
 
