@@ -69,6 +69,12 @@ final class CameraPipeline: NSObject, FlutterTexture,
 
   func start(position: AVCaptureDevice.Position) throws {
     self.position = position
+    #if targetEnvironment(simulator)
+      if AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) == nil {
+        try startSimulatorFeed()
+        return
+      }
+    #endif
     session.beginConfiguration()
     do {
       try configureSession(position: position)
@@ -108,6 +114,9 @@ final class CameraPipeline: NSObject, FlutterTexture,
 
   func stop() {
     queue.sync {
+      #if targetEnvironment(simulator)
+        simulatorFeed?.stop()
+      #endif
       session.stopRunning()
       writer?.cancel()
       writer = nil
@@ -175,7 +184,11 @@ final class CameraPipeline: NSObject, FlutterTexture,
       return
     }
     guard let cameraBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-    let time = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+    process(cameraBuffer, at: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+  }
+
+  /// Composites one camera frame, shows it and records it. Runs on `queue`.
+  private func process(_ cameraBuffer: CVPixelBuffer, at time: CMTime) {
     guard let frame = composite(cameraBuffer) else { return }
 
     latestLock.lock()
@@ -185,13 +198,48 @@ final class CameraPipeline: NSObject, FlutterTexture,
 
     if pendingStart {
       pendingStart = false
-      writer = try? SegmentWriter(
-        width: Self.outputWidth, height: Self.outputHeight, startTime: time)
+      do {
+        writer = try SegmentWriter(
+          width: Self.outputWidth, height: Self.outputHeight, startTime: time)
+      } catch {
+        NSLog("bg_camera: cannot start segment: \(error)")
+      }
     }
     writer?.appendVideo(frame, at: time)
   }
 
   // MARK: - Private
+
+  #if targetEnvironment(simulator)
+    private var simulatorFeed: SimulatorCameraFeed?
+
+    /// Simulator only: video file as camera, microphone if the Mac provides one.
+    private func startSimulatorFeed() throws {
+      guard
+        let feed = SimulatorCameraFeed(
+          queue: queue, onFrame: { [weak self] buffer, time in self?.process(buffer, at: time) })
+      else { throw CameraError.noDevice }
+      simulatorFeed = feed
+
+      session.beginConfiguration()
+      if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
+        let mic = AVCaptureDevice.default(for: .audio),
+        let input = try? AVCaptureDeviceInput(device: mic),
+        session.canAddInput(input), session.canAddOutput(audioOutput)
+      {
+        session.addInput(input)
+        audioOutput.setSampleBufferDelegate(self, queue: queue)
+        session.addOutput(audioOutput)
+      }
+      session.commitConfiguration()
+
+      textureId = textures.register(self)
+      queue.async {
+        self.session.startRunning()
+        feed.start()
+      }
+    }
+  #endif
 
   private func attachCamera(position: AVCaptureDevice.Position) throws {
     guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)

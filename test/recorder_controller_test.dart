@@ -101,11 +101,39 @@ void main() {
     await record(const Duration(seconds: 1));
     await record(const Duration(seconds: 2));
 
-    controller.removeLastSegment();
+    controller.removeSelectedOrLastSegment();
     expect(controller.segments.single.path, '/fake/segment_0.mp4');
 
     controller.clearSegments();
     expect(controller.segments, isEmpty);
+  });
+
+  test('delete button removes the selected fragment', () async {
+    await record(const Duration(seconds: 1));
+    await record(const Duration(seconds: 1));
+    await record(const Duration(seconds: 1));
+
+    controller.toggleSelection(0);
+    controller.removeSelectedOrLastSegment();
+    expect(
+      [for (final s in controller.segments) s.path],
+      ['/fake/segment_1.mp4', '/fake/segment_2.mp4'],
+    );
+    expect(controller.selectedIndex, isNull);
+
+    controller.toggleSelection(1);
+    controller.toggleSelection(1);
+    expect(controller.selectedIndex, isNull);
+  });
+
+  test('selection follows when an earlier fragment is removed', () async {
+    await record(const Duration(seconds: 1));
+    await record(const Duration(seconds: 1));
+    await record(const Duration(seconds: 1));
+
+    controller.toggleSelection(2);
+    controller.removeSegmentAt(0);
+    expect(controller.selectedIndex, 1);
   });
 
   test('cannot record once the limit is reached', () async {

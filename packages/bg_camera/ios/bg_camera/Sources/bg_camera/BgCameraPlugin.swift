@@ -20,6 +20,13 @@ public class BgCameraPlugin: NSObject, FlutterPlugin {
     let args = call.arguments as? [String: Any] ?? [:]
     switch call.method {
     case "requestPermissions":
+      #if targetEnvironment(simulator)
+        // Simulator feed (see SimulatorCameraFeed): nothing to ask for.
+        if AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .unspecified) == nil {
+          result(true)
+          return
+        }
+      #endif
       AVCaptureDevice.requestAccess(for: .video) { video in
         AVCaptureDevice.requestAccess(for: .audio) { audio in
           DispatchQueue.main.async { result(video && audio) }

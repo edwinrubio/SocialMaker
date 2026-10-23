@@ -76,6 +76,7 @@ final class SegmentWriter {
         completion(
           .success(RecordedSegment(url: writer.outputURL, durationMs: durationMs, thumbnailURL: thumbnail)))
       } else {
+        NSLog("bg_camera: segment failed: \(String(describing: writer.error))")
         completion(.failure(writer.error ?? CameraError.notRecording))
       }
     }

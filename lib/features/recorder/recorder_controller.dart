@@ -10,7 +10,7 @@ import 'package:flutter/services.dart';
 class RecorderController extends ChangeNotifier {
   RecorderController({
     BgCamera? camera,
-    this.maxDuration = const Duration(seconds: 60),
+    this.maxDuration = const Duration(minutes: 10),
   }) : camera = camera ?? BgCamera();
 
   final BgCamera camera;
@@ -22,6 +22,9 @@ class RecorderController extends ChangeNotifier {
 
   final List<RecordedSegment> _segments = [];
   List<RecordedSegment> get segments => List.unmodifiable(_segments);
+
+  /// Fragment picked in the strip; the delete button removes it.
+  int? selectedIndex;
 
   bool _recording = false;
   bool get isRecording => _recording;
@@ -62,6 +65,7 @@ class RecorderController extends ChangeNotifier {
 
   Future<void> startSegment() async {
     if (!canRecord) return;
+    selectedIndex = null;
     _recording = true;
     _stopwatch
       ..reset()
@@ -93,24 +97,40 @@ class RecorderController extends ChangeNotifier {
       error = null;
     } on PlatformException catch (e) {
       // Usually a release before the first frame arrived: nothing recorded.
+      debugPrint('stopSegment failed: ${e.message}');
       error = e.message;
     }
     notifyListeners();
   }
 
-  void removeSegmentAt(int index) {
-    _deleteSegmentFiles(_segments.removeAt(index));
+  /// Selects the fragment at [index], or clears the selection if it was selected.
+  void toggleSelection(int index) {
+    selectedIndex = selectedIndex == index ? null : index;
     notifyListeners();
   }
 
-  void removeLastSegment() {
-    if (_segments.isNotEmpty) removeSegmentAt(_segments.length - 1);
+  void removeSegmentAt(int index) {
+    _deleteSegmentFiles(_segments.removeAt(index));
+    final selected = selectedIndex;
+    if (selected == index) {
+      selectedIndex = null;
+    } else if (selected != null && selected > index) {
+      selectedIndex = selected - 1;
+    }
+    notifyListeners();
+  }
+
+  /// Removes the selected fragment, or the last one when none is selected.
+  void removeSelectedOrLastSegment() {
+    if (_segments.isEmpty) return;
+    removeSegmentAt(selectedIndex ?? _segments.length - 1);
   }
 
   /// Deletes every fragment, e.g. after the final video was exported.
   void clearSegments() {
     _segments.forEach(_deleteSegmentFiles);
     _segments.clear();
+    selectedIndex = null;
     notifyListeners();
   }
 

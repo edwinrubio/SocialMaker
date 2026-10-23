@@ -20,15 +20,10 @@ enum SegmentMerger {
       return
     }
     let composition = AVMutableComposition()
-    guard
-      let videoTrack = composition.addMutableTrack(
-        withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
-      let audioTrack = composition.addMutableTrack(
-        withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
-    else {
-      completion(.failure(MergeError.exportFailed("cannot create tracks")))
-      return
-    }
+    // Tracks are added only when a fragment has that media: an empty audio
+    // track (fragments recorded without microphone) makes the export fail.
+    var videoTrack: AVMutableCompositionTrack?
+    var audioTrack: AVMutableCompositionTrack?
 
     var cursor = CMTime.zero
     do {
@@ -36,16 +31,30 @@ enum SegmentMerger {
         let asset = AVURLAsset(url: url)
         let range = CMTimeRange(start: .zero, duration: asset.duration)
         if let video = asset.tracks(withMediaType: .video).first {
-          try videoTrack.insertTimeRange(range, of: video, at: cursor)
-          videoTrack.preferredTransform = video.preferredTransform
+          if videoTrack == nil {
+            videoTrack = composition.addMutableTrack(
+              withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
+            videoTrack?.preferredTransform = video.preferredTransform
+          }
+          try videoTrack?.insertTimeRange(range, of: video, at: cursor)
         }
         if let audio = asset.tracks(withMediaType: .audio).first {
-          try audioTrack.insertTimeRange(range, of: audio, at: cursor)
+          if audioTrack == nil {
+            audioTrack = composition.addMutableTrack(
+              withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+          }
+          try audioTrack?.insertTimeRange(
+            CMTimeRange(start: .zero, duration: min(range.duration, audio.timeRange.end)), of: audio,
+            at: cursor)
         }
         cursor = cursor + range.duration
       }
     } catch {
       completion(.failure(error))
+      return
+    }
+    guard videoTrack != nil else {
+      completion(.failure(MergeError.exportFailed("segments have no video")))
       return
     }
 

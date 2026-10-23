@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 
 import '../export/export_screen.dart';
 import '../filters/filters_sheet.dart';
-import '../segments/segment_preview_sheet.dart';
 import '../segments/segment_strip.dart';
 import 'record_button.dart';
 import 'recorder_controller.dart';
@@ -45,15 +44,6 @@ class _RecorderScreenState extends State<RecorderScreen>
     onBackground: (choice) =>
         _controller.setBackground(choice.type, path: choice.path),
   );
-
-  Future<void> _previewSegment(int index) async {
-    final delete = await showSegmentPreview(
-      context,
-      segment: _controller.segments[index],
-      index: index,
-    );
-    if (delete) _controller.removeSegmentAt(index);
-  }
 
   void _finish() {
     Navigator.of(context).push(
@@ -117,7 +107,8 @@ class _RecorderScreenState extends State<RecorderScreen>
           if (hasSegments) ...[
             SegmentStrip(
               segments: c.segments,
-              onTap: idle ? _previewSegment : (_) {},
+              selectedIndex: c.selectedIndex,
+              onTap: idle ? c.toggleSelection : (_) {},
             ),
             const SizedBox(height: 12),
           ],
@@ -127,8 +118,12 @@ class _RecorderScreenState extends State<RecorderScreen>
               _Timer(duration: c.liveDuration, recording: c.isRecording),
               _ControlButton(
                 icon: Icons.backspace_outlined,
-                tooltip: 'Borrar último fragmento',
-                onPressed: hasSegments && idle ? c.removeLastSegment : null,
+                tooltip: c.selectedIndex == null
+                    ? 'Borrar último fragmento'
+                    : 'Borrar fragmento ${c.selectedIndex! + 1}',
+                onPressed: hasSegments && idle
+                    ? c.removeSelectedOrLastSegment
+                    : null,
               ),
               RecordButton(
                 recording: c.isRecording,
