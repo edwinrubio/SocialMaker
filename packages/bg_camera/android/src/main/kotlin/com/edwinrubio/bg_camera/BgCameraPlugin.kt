@@ -2,6 +2,7 @@ package com.edwinrubio.bg_camera
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -228,30 +229,32 @@ class BgCameraPlugin :
         result: Result,
     ) {
         val activity = activityBinding?.activity
-        if (path == null || activity == null) {
+        if (path == null || app == null || activity == null) {
             result.error("share_failed", "Nothing to share", null)
             return
         }
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.bg_camera.files", File(path))
+        // The app's own "share a video" entry (Instagram then asks Reels,
+        // Feed, Stories or Direct; YouTube opens its upload/Shorts screen).
         val send =
             Intent(Intent.ACTION_SEND).apply {
                 type = "video/mp4"
                 putExtra(Intent.EXTRA_STREAM, uri)
+                // The grant travels with ClipData on Android 10+.
+                clipData = ClipData.newRawUri(null, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-        val installed =
+        val target =
             SHARE_PACKAGES[app].orEmpty().firstOrNull { pkg ->
-                runCatching { context.packageManager.getPackageInfo(pkg, 0) }.isSuccess
+                context.packageManager.queryIntentActivities(Intent(send).setPackage(pkg), 0).isNotEmpty()
             }
-        val intent =
-            if (installed != null) {
-                send.setPackage(installed)
-            } else {
-                Intent.createChooser(send, null)
-            }
+        if (target == null) {
+            result.success("notInstalled")
+            return
+        }
         try {
-            activity.startActivity(intent)
-            result.success(installed != null || app == null)
+            activity.startActivity(send.setPackage(target))
+            result.success("opened")
         } catch (e: Exception) {
             result.error("share_failed", e.message, null)
         }

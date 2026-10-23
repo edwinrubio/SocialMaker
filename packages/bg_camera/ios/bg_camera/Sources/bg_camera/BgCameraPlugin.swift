@@ -44,6 +44,18 @@ public class BgCameraPlugin: NSObject, FlutterPlugin {
         $0.setZoom(args["fraction"] as? Double ?? 0)
         result(nil)
       }
+    case "shareToApp":
+      guard let path = args["path"] as? String, let app = args["app"] as? String else {
+        result(FlutterError(code: "share_failed", message: "Missing arguments", details: nil))
+        return
+      }
+      AppSharer.share(video: URL(fileURLWithPath: path), to: app) { outcome in
+        switch outcome {
+        case .success(let outcome): result(outcome.rawValue)
+        case .failure(let error):
+          result(FlutterError(code: "share_failed", message: error.localizedDescription, details: nil))
+        }
+      }
     case "subtitlesSupported":
       result(true)
     case "transcribe":

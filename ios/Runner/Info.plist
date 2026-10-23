@@ -2,16 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>SocialMaker transcribe tu voz en el dispositivo para crear subtítulos.</string>
-	<key>NSCameraUsageDescription</key>
-	<string>SocialMaker usa la cámara para grabar tus videos.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>SocialMaker usa el micrófono para grabar el audio de tus videos.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>SocialMaker abre tu galería para elegir una foto o un video de fondo.</string>
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>SocialMaker guarda tus videos en la galería.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
@@ -34,8 +24,25 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>instagram</string>
+		<string>snssdk1233</string>
+		<string>tiktok</string>
+		<string>youtube</string>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>SocialMaker usa la cámara para grabar tus videos.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>SocialMaker usa el micrófono para grabar el audio de tus videos.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>SocialMaker guarda tus videos en la galería.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>SocialMaker abre tu galería para elegir una foto o un video de fondo.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>SocialMaker transcribe tu voz en el dispositivo para crear subtítulos.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

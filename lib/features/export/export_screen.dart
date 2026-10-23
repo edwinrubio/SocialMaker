@@ -137,16 +137,22 @@ class _ExportScreenState extends State<ExportScreen> {
   });
 
   /// [app] is `tiktok`, `instagram`, `youtube`, or null for the share sheet.
-  Future<void> _share(String? app) => _run((path) async {
-    if (Platform.isAndroid) {
-      final opened = await _camera.shareToApp(path, app: app);
-      if (!opened && app != null) {
-        _snack('La app no está instalada; elige dónde compartir.');
+  Future<void> _share(String? app, String label) => _run((path) async {
+    if (app != null) {
+      switch (await _camera.shareToApp(path, app: app)) {
+        case ShareOutcome.opened:
+          return;
+        case ShareOutcome.openedSaved:
+          if (mounted) setState(() => _saved = true);
+          _snack(
+            'Video guardado en Fotos: en $label elige el más reciente de tu galería.',
+          );
+          return;
+        case ShareOutcome.notInstalled:
+          _snack('$label no está instalada; elige dónde compartir.');
       }
-      return;
     }
-    // iOS: those apps only take videos through their SDKs, so use the
-    // share sheet, where they appear when installed.
+    if (!mounted) return;
     final box = context.findRenderObject() as RenderBox?;
     await SharePlus.instance.share(
       ShareParams(
@@ -338,7 +344,7 @@ class _ExportScreenState extends State<ExportScreen> {
                   label: label,
                   icon: icon,
                   color: color,
-                  onPressed: ready ? () => _share(app) : null,
+                  onPressed: ready ? () => _share(app, label) : null,
                 ),
             ],
           ),

@@ -7,6 +7,17 @@ enum CameraLens { front, back }
 /// What is drawn behind the segmented person.
 enum BackgroundType { none, image, video, blur }
 
+/// Result of [BgCamera.shareToApp].
+enum ShareOutcome {
+  /// The app opened with the video loaded.
+  opened,
+
+  /// The app opened; the video was saved to Photos for the user to pick.
+  openedSaved,
+
+  notInstalled,
+}
+
 /// Output resolution of the recorded video (portrait).
 enum VideoResolution {
   p720(720, 1280, '720p'),
@@ -205,15 +216,21 @@ class BgCamera {
     return result!;
   }
 
-  /// Android only: opens [app] (`tiktok`, `instagram`, `youtube`) with the
-  /// video, or the system chooser when that app isn't installed (returns
-  /// false then).
-  Future<bool> shareToApp(String path, {String? app}) async =>
-      await _channel.invokeMethod<bool>('shareToApp', {
-        'path': path,
-        'app': app,
-      }) ??
-      false;
+  /// Opens [app] (`tiktok`, `instagram`, `youtube`) with the video.
+  ///
+  /// Android hands the file straight to the app. iOS saves it to Photos
+  /// first: Instagram opens with it, TikTok and YouTube open with it as the
+  /// newest video in their gallery ([ShareOutcome.openedSaved]).
+  Future<ShareOutcome> shareToApp(String path, {required String app}) async {
+    final outcome = await _channel.invokeMethod<String>('shareToApp', {
+      'path': path,
+      'app': app,
+    });
+    return ShareOutcome.values.firstWhere(
+      (o) => o.name == outcome,
+      orElse: () => ShareOutcome.notInstalled,
+    );
+  }
 
   Future<void> dispose() => _channel.invokeMethod<void>('dispose');
 
