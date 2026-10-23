@@ -1,15 +1,17 @@
 # bg_camera
 
-A new Flutter plugin project.
+Local Flutter plugin used by SocialMaker. It captures camera + microphone,
+segments the person and composites them over an image or a looping video
+**natively**, so the preview texture and the recorded fragments already have
+the background replaced.
 
-## Getting Started
+| | iOS (15+) | Android (24+) |
+|---|---|---|
+| Capture | AVCaptureSession | CameraX `ImageAnalysis` + `AudioRecord` |
+| Segmentation | Vision `VNGeneratePersonSegmentationRequest` | MediaPipe `ImageSegmenter` (`selfie_segmenter.tflite`) |
+| Compositing | Core Image `CIBlendWithMask` | OpenGL ES 2 shader |
+| Recording | `AVAssetWriter` | `MediaCodec` + `MediaMuxer` |
+| Merge | `AVMutableComposition` | Media3 `Transformer` |
 
-This project is a starting point for a Flutter
-[plug-in package](https://flutter.dev/to/develop-plugins),
-a specialized package that includes platform-specific implementation code for
-Android and/or iOS.
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
-
+Output frames are 720×1280 (portrait). See [lib/bg_camera.dart](lib/bg_camera.dart)
+for the Dart API.

@@ -48,6 +48,11 @@ android {
         minSdk = 24
     }
 
+    androidResources {
+        // MediaPipe memory-maps the model, which requires it uncompressed.
+        noCompress += "tflite"
+    }
+
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
@@ -72,6 +77,15 @@ kotlin {
 }
 
 dependencies {
+    val cameraxVersion = "1.6.1"
+    val media3Version = "1.10.1"
+    implementation("androidx.camera:camera-core:$cameraxVersion")
+    implementation("androidx.camera:camera-camera2:$cameraxVersion")
+    implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
+    implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-transformer:$media3Version")
+    implementation("androidx.exifinterface:exifinterface:1.4.1")
+    implementation("com.google.mediapipe:tasks-vision:0.10.29")
     testImplementation("org.jetbrains.kotlin:kotlin-test")
     testImplementation("org.mockito:mockito-core:5.0.0")
 }

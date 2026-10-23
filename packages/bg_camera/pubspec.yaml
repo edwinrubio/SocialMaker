@@ -1,5 +1,5 @@
 name: bg_camera
-description: "A new Flutter plugin project."
+description: "Camera with native person segmentation, background replacement and segmented recording."
 version: 0.0.1
 homepage:
 
@@ -10,7 +10,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  plugin_platform_interface: ^2.0.2
 
 dev_dependencies:
   flutter_test:

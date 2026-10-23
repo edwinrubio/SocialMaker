@@ -1,28 +1,54 @@
-import 'package:flutter_test/flutter_test.dart';
 import 'package:bg_camera/bg_camera.dart';
-import 'package:bg_camera/bg_camera_platform_interface.dart';
-import 'package:bg_camera/bg_camera_method_channel.dart';
-import 'package:plugin_platform_interface/plugin_platform_interface.dart';
-
-class MockBgCameraPlatform
-    with MockPlatformInterfaceMixin
-    implements BgCameraPlatform {
-  @override
-  Future<String?> getPlatformVersion() => Future.value('42');
-}
+import 'package:flutter/services.dart';
+import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  final BgCameraPlatform initialPlatform = BgCameraPlatform.instance;
+  TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('$MethodChannelBgCamera is the default instance', () {
-    expect(initialPlatform, isInstanceOf<MethodChannelBgCamera>());
+  const channel = MethodChannel('bg_camera');
+  final calls = <MethodCall>[];
+
+  setUp(() {
+    calls.clear();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          calls.add(call);
+          switch (call.method) {
+            case 'initialize':
+              return {'textureId': 7, 'width': 720, 'height': 1280};
+            case 'stopSegment':
+              return {'path': '/tmp/a.mp4', 'durationMs': 1500};
+            case 'mergeSegments':
+              return '/tmp/out.mp4';
+          }
+          return null;
+        });
   });
 
-  test('getPlatformVersion', () async {
-    BgCamera bgCameraPlugin = BgCamera();
-    MockBgCameraPlatform fakePlatform = MockBgCameraPlatform();
-    BgCameraPlatform.instance = fakePlatform;
+  test('initialize returns preview info', () async {
+    final info = await BgCamera().initialize(lens: CameraLens.back);
 
-    expect(await bgCameraPlugin.getPlatformVersion(), '42');
+    expect(calls.single.arguments, {'lens': 'back'});
+    expect(info.textureId, 7);
+    expect(info.aspectRatio, 720 / 1280);
+  });
+
+  test('stopSegment parses path and duration', () async {
+    final segment = await BgCamera().stopSegment();
+
+    expect(segment.path, '/tmp/a.mp4');
+    expect(segment.duration, const Duration(milliseconds: 1500));
+  });
+
+  test('setBackground and mergeSegments send arguments', () async {
+    final camera = BgCamera();
+    await camera.setBackground(BackgroundType.image, path: '/tmp/bg.jpg');
+    final merged = await camera.mergeSegments(['/a.mp4', '/b.mp4']);
+
+    expect(calls[0].arguments, {'type': 'image', 'path': '/tmp/bg.jpg'});
+    expect(calls[1].arguments, {
+      'paths': ['/a.mp4', '/b.mp4'],
+    });
+    expect(merged, '/tmp/out.mp4');
   });
 }
