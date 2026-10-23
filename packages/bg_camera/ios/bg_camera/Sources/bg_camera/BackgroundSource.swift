@@ -2,9 +2,26 @@ import AVFoundation
 import CoreImage
 import QuartzCore
 
-/// Something drawn behind the person. Called on the pipeline queue.
+/// Something drawn behind the person. Called on the pipeline queue with the
+/// output extent and the camera frame already filled to it.
 protocol BackgroundSource: AnyObject {
-  func image(for extent: CGRect) -> CIImage?
+  func image(for extent: CGRect, camera: CIImage) -> CIImage?
+}
+
+/// The camera frame itself, blurred. Blurring a small copy is much cheaper
+/// and looks the same once scaled back up.
+final class BlurBackground: BackgroundSource {
+  private static let workingHeight: CGFloat = 320
+
+  func image(for extent: CGRect, camera: CIImage) -> CIImage? {
+    let scale = Self.workingHeight / extent.height
+    let small = camera.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+    return small.clampedToExtent()
+      .applyingGaussianBlur(sigma: 10)
+      .cropped(to: small.extent)
+      .transformed(by: CGAffineTransform(scaleX: 1 / scale, y: 1 / scale))
+      .cropped(to: extent)
+  }
 }
 
 final class ImageBackground: BackgroundSource {
@@ -18,7 +35,7 @@ final class ImageBackground: BackgroundSource {
     source = image
   }
 
-  func image(for extent: CGRect) -> CIImage? {
+  func image(for extent: CGRect, camera: CIImage) -> CIImage? {
     if let cached, cached.extent == extent { return cached.image }
     let image = source.aspectFilled(to: extent)
     cached = (extent, image)
@@ -57,7 +74,7 @@ final class VideoBackground: BackgroundSource {
     player.pause()
   }
 
-  func image(for extent: CGRect) -> CIImage? {
+  func image(for extent: CGRect, camera: CIImage) -> CIImage? {
     let time = output.itemTime(forHostTime: CACurrentMediaTime())
     if output.hasNewPixelBuffer(forItemTime: time),
       let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil)

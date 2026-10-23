@@ -16,8 +16,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:social_maker/features/recorder/record_button.dart';
+import 'package:social_maker/features/subtitles/caption_grouper.dart';
 import 'package:social_maker/main.dart';
-import 'package:video_player/video_player.dart';
+import 'package:video_player/video_player.dart' hide Caption;
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -36,11 +37,19 @@ void main() {
     await wait(tester, const Duration(seconds: 4));
   }
 
-  Future<void> hold(WidgetTester tester, Duration duration) async {
+  /// Holds the record button; with [slideUp], drags the finger up halfway
+  /// through (zoom).
+  Future<void> hold(
+    WidgetTester tester,
+    Duration duration, {
+    double slideUp = 0,
+  }) async {
     final gesture = await tester.startGesture(
       tester.getCenter(find.byType(RecordButton)),
     );
-    await wait(tester, duration);
+    await wait(tester, duration ~/ 2);
+    if (slideUp > 0) await gesture.moveBy(Offset(0, -slideUp));
+    await wait(tester, duration ~/ 2);
     await gesture.up();
     await wait(tester, const Duration(seconds: 2));
   }
@@ -68,9 +77,9 @@ void main() {
       print('SKIP background: no ${background.path}');
     }
 
-    await hold(tester, const Duration(seconds: 2));
-    await hold(tester, const Duration(milliseconds: 1500));
     await hold(tester, const Duration(milliseconds: 2500));
+    await hold(tester, const Duration(milliseconds: 1500));
+    await hold(tester, const Duration(seconds: 3), slideUp: 250);
     expect(find.bySemanticsLabel(RegExp('^Fragmento 3')), findsOneWidget);
     await step(tester, 'three-fragments');
 
@@ -87,5 +96,67 @@ void main() {
     expect(find.text('Tu video'), findsOneWidget);
     expect(find.byType(VideoPlayer), findsOneWidget, reason: 'export failed');
     await step(tester, 'exported');
+
+    final camera = BgCamera();
+    if (!await camera.subtitlesSupported()) return;
+
+    final merged =
+        Directory.systemTemp
+            .listSync()
+            .whereType<File>()
+            .where((f) => f.path.contains('socialmaker_'))
+            .toList()
+          ..sort(
+            (a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()),
+          );
+
+    List<Caption> captions;
+    if (simulatorAt >= 0) {
+      // The Simulator has no SpeechTranscriber model and the fallback asks
+      // for a permission no tool can grant there; burn known captions.
+      captions = const [
+        Caption(
+          start: Duration.zero,
+          end: Duration(milliseconds: 1800),
+          text: 'Hola a todos',
+        ),
+        Caption(
+          start: Duration(milliseconds: 1800),
+          end: Duration(milliseconds: 4000),
+          text: 'bienvenidos a mi canal',
+        ),
+      ];
+    } else {
+      await tester.tap(find.byKey(const Key('subtitles-language')));
+      await wait(tester, const Duration(seconds: 1));
+      await tester.tap(find.text('Español').last);
+      await wait(tester, const Duration(seconds: 1));
+      await tester.tap(find.text('Generar subtítulos con IA'));
+      for (
+        var i = 0;
+        i < 120 && find.text('Subtítulos').evaluate().isEmpty;
+        i++
+      ) {
+        await wait(tester, const Duration(seconds: 1));
+      }
+      expect(find.text('Subtítulos'), findsOneWidget, reason: 'no captions');
+      await step(tester, 'captions');
+      captions = groupWords(
+        await camera.transcribe(merged.first.path, localeId: 'es-MX'),
+      );
+    }
+    // ignore: avoid_print
+    print(
+      'CAPTIONS ${[for (final c in captions) '${c.start.inMilliseconds}-${c.end.inMilliseconds} ${c.text}']}',
+    );
+    final burned = await camera.burnSubtitles(merged.first.path, captions);
+    // ignore: avoid_print
+    print('BURNED $burned');
+    expect(File(burned).existsSync(), isTrue);
+    // The app (and its tmp) is removed after the run; keep a copy to inspect.
+    if (simulatorAt >= 0) {
+      File(burned).copySync('$folder/burned_test.mp4');
+      merged.first.copySync('$folder/merged_test.mp4');
+    }
   });
 }

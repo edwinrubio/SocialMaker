@@ -19,6 +19,34 @@ enum CameraError: LocalizedError {
   }
 }
 
+/// Recorded video size (portrait), capture preset and bit rate. Raw values
+/// match the Dart enum.
+enum OutputResolution: String, CaseIterable {
+  case p720, p1080, p2160
+
+  var width: Int { [.p720: 720, .p1080: 1080, .p2160: 2160][self]! }
+  var height: Int { [.p720: 1280, .p1080: 1920, .p2160: 3840][self]! }
+  var bitRate: Int { [.p720: 6_000_000, .p1080: 12_000_000, .p2160: 40_000_000][self]! }
+
+  var preset: AVCaptureSession.Preset {
+    switch self {
+    case .p720: return .hd1280x720
+    case .p1080: return .hd1920x1080
+    case .p2160: return .hd4K3840x2160
+    }
+  }
+
+  /// What the front camera can capture (the simulator feed upscales, so it
+  /// stops at 1080p).
+  static func supported() -> [OutputResolution] {
+    guard
+      let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
+    else { return [.p720, .p1080] }
+    let supported = allCases.filter { camera.supportsSessionPreset($0.preset) }
+    return supported.isEmpty ? [.p720] : supported
+  }
+}
+
 /// Captures camera + microphone, replaces the background behind the person and
 /// feeds the composited frames to a Flutter texture and, while recording, to a
 /// `SegmentWriter`.
@@ -27,8 +55,9 @@ enum CameraError: LocalizedError {
 final class CameraPipeline: NSObject, FlutterTexture,
   AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate
 {
-  static let outputWidth = 720
-  static let outputHeight = 1280
+  let resolution: OutputResolution
+  var outputWidth: Int { resolution.width }
+  var outputHeight: Int { resolution.height }
 
   private(set) var textureId: Int64 = 0
 
@@ -62,8 +91,9 @@ final class CameraPipeline: NSObject, FlutterTexture,
     set { queue.async { self._background = newValue } }
   }
 
-  init(textures: FlutterTextureRegistry) {
+  init(textures: FlutterTextureRegistry, resolution: OutputResolution) {
     self.textures = textures
+    self.resolution = resolution
     super.init()
   }
 
@@ -90,7 +120,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
   }
 
   private func configureSession(position: AVCaptureDevice.Position) throws {
-    session.sessionPreset = .hd1280x720
+    session.sessionPreset = session.canSetSessionPreset(resolution.preset) ? resolution.preset : .high
 
     try attachCamera(position: position)
 
@@ -141,6 +171,18 @@ final class CameraPipeline: NSObject, FlutterTexture,
       }
       self.configureVideoConnection()
       self.session.commitConfiguration()
+    }
+  }
+
+  /// [fraction] 0...1 over the useful zoom range (capped at 10×).
+  func setZoom(_ fraction: Double) {
+    queue.async {
+      guard let device = self.videoInput?.device, (try? device.lockForConfiguration()) != nil else {
+        return
+      }
+      let maxZoom = min(device.activeFormat.videoMaxZoomFactor, 10)
+      device.videoZoomFactor = 1 + CGFloat(min(max(fraction, 0), 1)) * (maxZoom - 1)
+      device.unlockForConfiguration()
     }
   }
 
@@ -200,7 +242,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
       pendingStart = false
       do {
         writer = try SegmentWriter(
-          width: Self.outputWidth, height: Self.outputHeight, startTime: time)
+          width: outputWidth, height: outputHeight, bitRate: resolution.bitRate, startTime: time)
       } catch {
         NSLog("bg_camera: cannot start segment: \(error)")
       }
@@ -213,31 +255,18 @@ final class CameraPipeline: NSObject, FlutterTexture,
   #if targetEnvironment(simulator)
     private var simulatorFeed: SimulatorCameraFeed?
 
-    /// Simulator only: video file as camera, microphone if the Mac provides one.
+    /// Simulator only: a video file as camera and microphone.
     private func startSimulatorFeed() throws {
       guard
         let feed = SimulatorCameraFeed(
-          queue: queue, onFrame: { [weak self] buffer, time in self?.process(buffer, at: time) })
+          queue: queue,
+          onFrame: { [weak self] buffer, time in self?.process(buffer, at: time) },
+          onAudio: { [weak self] sample in self?.writer?.appendAudio(sample) })
       else { throw CameraError.noDevice }
       simulatorFeed = feed
 
-      session.beginConfiguration()
-      if AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
-        let mic = AVCaptureDevice.default(for: .audio),
-        let input = try? AVCaptureDeviceInput(device: mic),
-        session.canAddInput(input), session.canAddOutput(audioOutput)
-      {
-        session.addInput(input)
-        audioOutput.setSampleBufferDelegate(self, queue: queue)
-        session.addOutput(audioOutput)
-      }
-      session.commitConfiguration()
-
       textureId = textures.register(self)
-      queue.async {
-        self.session.startRunning()
-        feed.start()
-      }
+      queue.async { feed.start() }
     }
   #endif
 
@@ -266,11 +295,13 @@ final class CameraPipeline: NSObject, FlutterTexture,
   /// Renders the camera frame (with the background replaced, if any) into an
   /// output-sized buffer.
   private func composite(_ cameraBuffer: CVPixelBuffer) -> CVPixelBuffer? {
-    let extent = CGRect(x: 0, y: 0, width: Self.outputWidth, height: Self.outputHeight)
+    let extent = CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight)
     let camera = CIImage(cvPixelBuffer: cameraBuffer).aspectFilled(to: extent)
     var image = camera
 
-    if let background = _background, let backgroundImage = background.image(for: extent) {
+    if let background = _background,
+      let backgroundImage = background.image(for: extent, camera: camera)
+    {
       try? sequenceHandler.perform([segmentation], on: cameraBuffer)
       if let maskBuffer = segmentation.results?.first?.pixelBuffer {
         let mask = CIImage(cvPixelBuffer: maskBuffer).aspectFilled(to: extent)
@@ -289,8 +320,8 @@ final class CameraPipeline: NSObject, FlutterTexture,
     if bufferPool == nil {
       let attributes: [String: Any] = [
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-        kCVPixelBufferWidthKey as String: Self.outputWidth,
-        kCVPixelBufferHeightKey as String: Self.outputHeight,
+        kCVPixelBufferWidthKey as String: outputWidth,
+        kCVPixelBufferHeightKey as String: outputHeight,
         kCVPixelBufferIOSurfacePropertiesKey as String: [:],
         kCVPixelBufferMetalCompatibilityKey as String: true,
       ]

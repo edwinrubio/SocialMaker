@@ -17,7 +17,7 @@ final class SegmentWriter {
   private let startTime: CMTime
   private var lastVideoTime: CMTime
 
-  init(width: Int, height: Int, startTime: CMTime) throws {
+  init(width: Int, height: Int, bitRate: Int, startTime: CMTime) throws {
     let url = FileManager.default.temporaryDirectory
       .appendingPathComponent("segment_\(UUID().uuidString).mp4")
     writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
@@ -28,7 +28,7 @@ final class SegmentWriter {
         AVVideoCodecKey: AVVideoCodecType.h264,
         AVVideoWidthKey: width,
         AVVideoHeightKey: height,
-        AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 6_000_000],
+        AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: bitRate],
       ])
     videoInput.expectsMediaDataInRealTime = true
     adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInput, sourcePixelBufferAttributes: nil)

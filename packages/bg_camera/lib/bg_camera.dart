@@ -174,7 +174,8 @@ class BgCamera {
   Future<bool> subtitlesSupported() async =>
       await _channel.invokeMethod<bool>('subtitlesSupported') ?? false;
 
-  /// Transcribes the speech in [path] on the device, as timed phrases.
+  /// Transcribes the speech in [path] on the device, as timed words (group
+  /// them into phrases for display).
   /// [localeId] is a BCP-47 tag such as `es-CO`.
   Future<List<Caption>> transcribe(
     String path, {
@@ -197,6 +198,16 @@ class BgCamera {
     });
     return result!;
   }
+
+  /// Android only: opens [app] (`tiktok`, `instagram`, `youtube`) with the
+  /// video, or the system chooser when that app isn't installed (returns
+  /// false then).
+  Future<bool> shareToApp(String path, {String? app}) async =>
+      await _channel.invokeMethod<bool>('shareToApp', {
+        'path': path,
+        'app': app,
+      }) ??
+      false;
 
   Future<void> dispose() => _channel.invokeMethod<void>('dispose');
 

@@ -40,6 +40,9 @@ class FakeBgCamera implements BgCamera {
   Future<bool> subtitlesSupported() async => false;
 
   @override
+  Future<bool> shareToApp(String path, {String? app}) async => false;
+
+  @override
   Future<List<Caption>> transcribe(
     String path, {
     required String localeId,

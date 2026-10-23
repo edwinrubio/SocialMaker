@@ -62,6 +62,56 @@
       "criterio": "Con un video de fondo, la persona aparece sobre el video en movimiento en preview y exportado.",
       "bloqueo": "Android verificado en emulador. iOS: compila y maneja falta de cámara; grabación y fondo pendientes de probar en iPhone físico (el simulador no tiene cámara).",
       "actualizado": "2026-10-23"
+    },
+    {
+      "id": "zoom",
+      "nombre": "Zoom al grabar",
+      "descripcion": "Deslizar hacia arriba durante el hold hace zoom proporcional; al soltar vuelve a 1x.",
+      "estado": "en-revision",
+      "responsable": "Ejecutor-Flutter / Ejecutor-iOS / Ejecutor-Android",
+      "criterio": "Funciona en iPhone físico y Android.",
+      "bloqueo": "Android emulador: setLinearZoom llamado; iOS: videoZoomFactor. Pendiente probar en iPhone.",
+      "actualizado": "2026-10-23"
+    },
+    {
+      "id": "resolucion",
+      "nombre": "Resolución de salida",
+      "descripcion": "Botón Configuración junto a Filtros: 720p / 1080p / 4K (no soportadas deshabilitadas), guardada en shared_preferences.",
+      "estado": "en-revision",
+      "responsable": "Ejecutor-Flutter / Ejecutor-iOS / Ejecutor-Android",
+      "criterio": "Funciona en iPhone físico y Android.",
+      "bloqueo": "Emulador Android: 720p (no soporta más). Simulador iOS: 1080p 1080x1920 verificado con ffprobe. 4K pendiente en iPhone.",
+      "actualizado": "2026-10-23"
+    },
+    {
+      "id": "fondo-desenfocado",
+      "nombre": "Fondo desenfocado",
+      "descripcion": "Filtros → Fondos → Desenfocar: blur de la cámara detrás de la persona.",
+      "estado": "en-revision",
+      "responsable": "Ejecutor-Flutter / Ejecutor-iOS / Ejecutor-Android",
+      "criterio": "Funciona en iPhone físico y Android.",
+      "bloqueo": "Android emulador verificado. iOS pendiente en iPhone (Vision no segmenta en simulador).",
+      "actualizado": "2026-10-23"
+    },
+    {
+      "id": "subtitulos-ios",
+      "nombre": "Subtítulos con IA de Apple (iOS)",
+      "descripcion": "SpeechAnalyzer/SpeechTranscriber en el dispositivo (fallback SFSpeechRecognizer), frases editables, quemado con Core Image.",
+      "estado": "en-revision",
+      "responsable": "Ejecutor-Flutter / Ejecutor-iOS / Ejecutor-Android",
+      "criterio": "Funciona en iPhone físico y Android.",
+      "bloqueo": "Simulador: quemado verificado (frames con texto en tiempos correctos). Transcripción solo probable en iPhone (SpeechTranscriber no disponible en simulador).",
+      "actualizado": "2026-10-23"
+    },
+    {
+      "id": "compartir",
+      "nombre": "Compartir en TikTok / Instagram / Shorts",
+      "descripcion": "Fila de compartir tras exportar: Android intent directo por paquete (FileProvider), iOS hoja de compartir del sistema.",
+      "estado": "en-revision",
+      "responsable": "Ejecutor-Flutter / Ejecutor-iOS / Ejecutor-Android",
+      "criterio": "Funciona en iPhone físico y Android.",
+      "bloqueo": "Pendiente probar en dispositivo.",
+      "actualizado": "2026-10-23"
     }
   ]
 }

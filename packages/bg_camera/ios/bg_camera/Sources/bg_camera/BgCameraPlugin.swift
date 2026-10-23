@@ -32,8 +32,24 @@ public class BgCameraPlugin: NSObject, FlutterPlugin {
           DispatchQueue.main.async { result(video && audio) }
         }
       }
+    case "supportedResolutions":
+      result(OutputResolution.supported().map(\.rawValue))
     case "initialize":
-      initialize(lens: args["lens"] as? String ?? "front", result: result)
+      initialize(
+        lens: args["lens"] as? String ?? "front",
+        resolution: OutputResolution(rawValue: args["resolution"] as? String ?? "") ?? .p1080,
+        result: result)
+    case "setZoom":
+      withPipeline(result) {
+        $0.setZoom(args["fraction"] as? Double ?? 0)
+        result(nil)
+      }
+    case "subtitlesSupported":
+      result(true)
+    case "transcribe":
+      transcribe(path: args["path"] as? String, localeId: args["locale"] as? String, result: result)
+    case "burnSubtitles":
+      burnSubtitles(path: args["path"] as? String, captions: args["captions"] as? [[String: Any]], result: result)
     case "setBackground":
       setBackground(type: args["type"] as? String ?? "none", path: args["path"] as? String, result: result)
     case "switchCamera":
@@ -83,9 +99,9 @@ public class BgCameraPlugin: NSObject, FlutterPlugin {
     }
   }
 
-  private func initialize(lens: String, result: @escaping FlutterResult) {
+  private func initialize(lens: String, resolution: OutputResolution, result: @escaping FlutterResult) {
     dispose()
-    let pipeline = CameraPipeline(textures: textures)
+    let pipeline = CameraPipeline(textures: textures, resolution: resolution)
     do {
       try pipeline.start(position: lens == "back" ? .back : .front)
     } catch {
@@ -96,8 +112,8 @@ public class BgCameraPlugin: NSObject, FlutterPlugin {
     self.pipeline = pipeline
     result([
       "textureId": pipeline.textureId,
-      "width": CameraPipeline.outputWidth,
-      "height": CameraPipeline.outputHeight,
+      "width": pipeline.outputWidth,
+      "height": pipeline.outputHeight,
     ])
   }
 
@@ -113,10 +129,52 @@ public class BgCameraPlugin: NSObject, FlutterPlugin {
         pipeline.background = source
       case ("video", let url?):
         pipeline.background = VideoBackground(url: url)
+      case ("blur", _):
+        pipeline.background = BlurBackground()
       default:
         pipeline.background = nil
       }
       result(nil)
+    }
+  }
+
+  private func transcribe(path: String?, localeId: String?, result: @escaping FlutterResult) {
+    guard let path else {
+      result(FlutterError(code: "transcribe_failed", message: "Missing path", details: nil))
+      return
+    }
+    let localeId = localeId ?? Locale.current.identifier
+    Task {
+      do {
+        let words = try await Transcriber.transcribe(video: URL(fileURLWithPath: path), localeId: localeId)
+        await MainActor.run { result(words.map(\.map)) }
+      } catch {
+        await MainActor.run {
+          result(FlutterError(code: "transcribe_failed", message: error.localizedDescription, details: nil))
+        }
+      }
+    }
+  }
+
+  private func burnSubtitles(path: String?, captions: [[String: Any]]?, result: @escaping FlutterResult) {
+    guard let path, let captions else {
+      result(FlutterError(code: "subtitles_failed", message: "Missing arguments", details: nil))
+      return
+    }
+    let specs = captions.compactMap { map -> CaptionSpec? in
+      guard let start = map["startMs"] as? Int, let end = map["endMs"] as? Int,
+        let text = map["text"] as? String
+      else { return nil }
+      return CaptionSpec(start: Double(start) / 1000, end: Double(end) / 1000, text: text)
+    }
+    SubtitleBurner.burn(video: URL(fileURLWithPath: path), captions: specs) { outcome in
+      DispatchQueue.main.async {
+        switch outcome {
+        case .success(let url): result(url.path)
+        case .failure(let error):
+          result(FlutterError(code: "subtitles_failed", message: error.localizedDescription, details: nil))
+        }
+      }
     }
   }
 
