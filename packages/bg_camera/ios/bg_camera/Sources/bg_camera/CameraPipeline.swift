@@ -70,6 +70,20 @@ final class CameraPipeline: NSObject, FlutterTexture,
   func start(position: AVCaptureDevice.Position) throws {
     self.position = position
     session.beginConfiguration()
+    do {
+      try configureSession(position: position)
+    } catch {
+      // stopRunning() aborts the app while a configuration is still open.
+      session.commitConfiguration()
+      throw error
+    }
+    session.commitConfiguration()
+
+    textureId = textures.register(self)
+    queue.async { self.session.startRunning() }
+  }
+
+  private func configureSession(position: AVCaptureDevice.Position) throws {
     session.sessionPreset = .hd1280x720
 
     try attachCamera(position: position)
@@ -90,10 +104,6 @@ final class CameraPipeline: NSObject, FlutterTexture,
     session.addOutput(audioOutput)
 
     configureVideoConnection()
-    session.commitConfiguration()
-
-    textureId = textures.register(self)
-    queue.async { self.session.startRunning() }
   }
 
   func stop() {

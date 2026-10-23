@@ -20,7 +20,7 @@
       "estado": "en-revision",
       "responsable": "Ejecutor-Flutter / Ejecutor-iOS / Ejecutor-Android",
       "criterio": "En dispositivo físico (iOS y Android): 3 presiones generan 3 archivos de video con audio y la barra muestra 3 segmentos.",
-      "bloqueo": "Falta verificar en dispositivo físico iOS y Android (no hay dispositivo conectado).",
+      "bloqueo": "Android verificado en emulador. iOS: compila y maneja falta de cámara; grabación y fondo pendientes de probar en iPhone físico (el simulador no tiene cámara).",
       "actualizado": "2026-10-23"
     },
     {
@@ -30,7 +30,7 @@
       "estado": "en-revision",
       "responsable": "Ejecutor-Flutter",
       "criterio": "Se puede reproducir cada fragmento y borrar cualquiera; la duración total se actualiza.",
-      "bloqueo": "Falta verificar en dispositivo físico iOS y Android (no hay dispositivo conectado).",
+      "bloqueo": "Android verificado en emulador. iOS: compila y maneja falta de cámara; grabación y fondo pendientes de probar en iPhone físico (el simulador no tiene cámara).",
       "actualizado": "2026-10-23"
     },
     {
@@ -40,7 +40,7 @@
       "estado": "en-revision",
       "responsable": "Ejecutor-iOS / Ejecutor-Android",
       "criterio": "3 fragmentos, borrar el del medio, exportar: el video final tiene 2 en orden, con audio, y aparece en la galería.",
-      "bloqueo": "Falta verificar en dispositivo físico iOS y Android (no hay dispositivo conectado).",
+      "bloqueo": "Android verificado en emulador. iOS: compila y maneja falta de cámara; grabación y fondo pendientes de probar en iPhone físico (el simulador no tiene cámara).",
       "actualizado": "2026-10-23"
     },
     {
@@ -50,7 +50,7 @@
       "estado": "en-revision",
       "responsable": "Ejecutor-iOS / Ejecutor-Android",
       "criterio": "Con una foto de fondo, la persona aparece sobre la foto en el preview y en el archivo exportado.",
-      "bloqueo": "Falta verificar en dispositivo físico iOS y Android (no hay dispositivo conectado).",
+      "bloqueo": "Android verificado en emulador. iOS: compila y maneja falta de cámara; grabación y fondo pendientes de probar en iPhone físico (el simulador no tiene cámara).",
       "actualizado": "2026-10-23"
     },
     {
@@ -60,7 +60,7 @@
       "estado": "en-revision",
       "responsable": "Ejecutor-iOS / Ejecutor-Android",
       "criterio": "Con un video de fondo, la persona aparece sobre el video en movimiento en preview y exportado.",
-      "bloqueo": "Falta verificar en dispositivo físico iOS y Android (no hay dispositivo conectado).",
+      "bloqueo": "Android verificado en emulador. iOS: compila y maneja falta de cámara; grabación y fondo pendientes de probar en iPhone físico (el simulador no tiene cámara).",
       "actualizado": "2026-10-23"
     }
   ]

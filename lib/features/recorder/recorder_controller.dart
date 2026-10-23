@@ -54,7 +54,8 @@ class RecorderController extends ChangeNotifier {
     try {
       preview = await camera.initialize();
     } on PlatformException catch (e) {
-      error = e.message ?? 'No se pudo abrir la cámara.';
+      debugPrint('initialize failed: ${e.message}');
+      error = 'No se pudo abrir la cámara o el micrófono.';
     }
     notifyListeners();
   }
