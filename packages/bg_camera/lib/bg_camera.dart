@@ -28,10 +28,17 @@ class CameraPreviewInfo {
 /// A recorded video fragment on local storage.
 @immutable
 class RecordedSegment {
-  const RecordedSegment({required this.path, required this.duration});
+  const RecordedSegment({
+    required this.path,
+    required this.duration,
+    this.thumbnailPath,
+  });
 
   final String path;
   final Duration duration;
+
+  /// JPEG of the fragment's first frame, when one could be extracted.
+  final String? thumbnailPath;
 }
 
 /// Camera that segments the person and composites them over a background
@@ -78,6 +85,7 @@ class BgCamera {
     return RecordedSegment(
       path: info['path'] as String,
       duration: Duration(milliseconds: info['durationMs'] as int),
+      thumbnailPath: info['thumbnailPath'] as String?,
     );
   }
 

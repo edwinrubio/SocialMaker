@@ -1,8 +1,10 @@
 import AVFoundation
+import UIKit
 
 struct RecordedSegment {
   let url: URL
   let durationMs: Int
+  let thumbnailURL: URL?
 }
 
 /// Writes one recorded fragment (H.264 + AAC) to a temporary .mp4.
@@ -70,11 +72,25 @@ final class SegmentWriter {
     writer.endSession(atSourceTime: lastVideoTime)
     writer.finishWriting { [writer] in
       if writer.status == .completed {
-        completion(.success(RecordedSegment(url: writer.outputURL, durationMs: durationMs)))
+        let thumbnail = Self.writeThumbnail(for: writer.outputURL)
+        completion(
+          .success(RecordedSegment(url: writer.outputURL, durationMs: durationMs, thumbnailURL: thumbnail)))
       } else {
         completion(.failure(writer.error ?? CameraError.notRecording))
       }
     }
+  }
+
+  /// Saves the first frame next to the video as a small JPEG.
+  private static func writeThumbnail(for video: URL) -> URL? {
+    let generator = AVAssetImageGenerator(asset: AVURLAsset(url: video))
+    generator.appliesPreferredTrackTransform = true
+    generator.maximumSize = CGSize(width: 240, height: 240)
+    guard let image = try? generator.copyCGImage(at: .zero, actualTime: nil),
+      let data = UIImage(cgImage: image).jpegData(compressionQuality: 0.8)
+    else { return nil }
+    let url = video.deletingPathExtension().appendingPathExtension("jpg")
+    return (try? data.write(to: url)) != nil ? url : nil
   }
 
   func cancel() {

@@ -1,8 +1,10 @@
 import 'package:bg_camera/bg_camera.dart';
 import 'package:flutter/material.dart';
 
-import '../background/background_picker.dart';
-import '../segments/segments_review_screen.dart';
+import '../export/export_screen.dart';
+import '../filters/filters_sheet.dart';
+import '../segments/segment_preview_sheet.dart';
+import '../segments/segment_strip.dart';
 import 'record_button.dart';
 import 'recorder_controller.dart';
 import 'segment_bar.dart';
@@ -37,20 +39,26 @@ class _RecorderScreenState extends State<RecorderScreen>
     super.dispose();
   }
 
-  Future<void> _chooseBackground() async {
-    final choice = await showBackgroundPicker(
+  Future<void> _openFilters() => showFiltersSheet(
+    context,
+    current: _controller.backgroundType,
+    onBackground: (choice) =>
+        _controller.setBackground(choice.type, path: choice.path),
+  );
+
+  Future<void> _previewSegment(int index) async {
+    final delete = await showSegmentPreview(
       context,
-      current: _controller.backgroundType,
+      segment: _controller.segments[index],
+      index: index,
     );
-    if (choice != null) {
-      await _controller.setBackground(choice.type, path: choice.path);
-    }
+    if (delete) _controller.removeSegmentAt(index);
   }
 
-  void _openReview() {
+  void _finish() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => SegmentsReviewScreen(controller: _controller),
+        builder: (_) => ExportScreen(controller: _controller),
       ),
     );
   }
@@ -83,8 +91,8 @@ class _RecorderScreenState extends State<RecorderScreen>
 
   Widget _buildOverlay() {
     final c = _controller;
+    final idle = !c.isRecording;
     final hasSegments = c.segments.isNotEmpty;
-    final seconds = c.liveDuration.inMilliseconds / 1000;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Column(
@@ -94,44 +102,33 @@ class _RecorderScreenState extends State<RecorderScreen>
             current: c.currentSegmentDuration,
             max: c.maxDuration,
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Text(
-                '${seconds.toStringAsFixed(1)} s / ${c.maxDuration.inSeconds} s',
-                style: const TextStyle(
-                  fontFeatures: [FontFeature.tabularFigures()],
-                  shadows: [Shadow(blurRadius: 4)],
-                ),
-              ),
-              const Spacer(),
-              IconButton(
-                tooltip: 'Cambiar cámara',
-                onPressed: c.isRecording ? null : c.switchCamera,
-                icon: const Icon(Icons.cameraswitch_outlined),
-              ),
-            ],
-          ),
           if (c.error != null && c.preview != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(
                 c.error!,
-                style: const TextStyle(color: Colors.white70),
+                style: const TextStyle(
+                  color: Colors.white70,
+                  shadows: [Shadow(blurRadius: 4)],
+                ),
               ),
             ),
           const Spacer(),
+          if (hasSegments) ...[
+            SegmentStrip(
+              segments: c.segments,
+              onTap: idle ? _previewSegment : (_) {},
+            ),
+            const SizedBox(height: 12),
+          ],
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _SideAction(
-                icon: c.backgroundType == BackgroundType.none
-                    ? Icons.wallpaper_outlined
-                    : Icons.wallpaper,
-                label: 'Fondo',
-                onPressed: c.isRecording || c.preview == null
-                    ? null
-                    : _chooseBackground,
+              _Timer(duration: c.liveDuration, recording: c.isRecording),
+              _ControlButton(
+                icon: Icons.backspace_outlined,
+                tooltip: 'Borrar último fragmento',
+                onPressed: hasSegments && idle ? c.removeLastSegment : null,
               ),
               RecordButton(
                 recording: c.isRecording,
@@ -139,37 +136,117 @@ class _RecorderScreenState extends State<RecorderScreen>
                 onStart: c.startSegment,
                 onStop: c.stopSegment,
               ),
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _SideAction(
-                    icon: Icons.backspace_outlined,
-                    label: 'Borrar',
-                    onPressed: hasSegments && !c.isRecording
-                        ? c.removeLastSegment
-                        : null,
-                  ),
-                  const SizedBox(height: 12),
-                  _SideAction(
-                    icon: Icons.check_circle,
-                    label: 'Listo',
-                    onPressed: hasSegments && !c.isRecording
-                        ? _openReview
-                        : null,
-                  ),
-                ],
+              _ControlButton(
+                icon: Icons.check_circle,
+                tooltip: 'Listo: unir fragmentos',
+                color: const Color(0xFFFE2C55),
+                onPressed: hasSegments && idle ? _finish : null,
+              ),
+              _ControlButton(
+                icon: Icons.cameraswitch_outlined,
+                tooltip: 'Cambiar cámara',
+                onPressed: idle && c.preview != null ? c.switchCamera : null,
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            c.isRecording ? 'Grabando…' : 'Mantén presionado para grabar',
-            style: const TextStyle(
-              color: Colors.white70,
-              shadows: [Shadow(blurRadius: 4)],
-            ),
+          const SizedBox(height: 12),
+          _FiltersButton(
+            active: c.backgroundType != BackgroundType.none,
+            onPressed: idle && c.preview != null ? _openFilters : null,
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _Timer extends StatelessWidget {
+  const _Timer({required this.duration, required this.recording});
+
+  final Duration duration;
+  final bool recording;
+
+  @override
+  Widget build(BuildContext context) {
+    final minutes = duration.inMinutes.toString().padLeft(2, '0');
+    final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: recording ? const Color(0xFFFE2C55) : Colors.black45,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        '$minutes:$seconds',
+        style: const TextStyle(
+          fontWeight: FontWeight.w600,
+          fontFeatures: [FontFeature.tabularFigures()],
+        ),
+      ),
+    );
+  }
+}
+
+class _ControlButton extends StatelessWidget {
+  const _ControlButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+    this.color = Colors.white,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback? onPressed;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      onPressed: onPressed,
+      iconSize: 32,
+      color: color,
+      disabledColor: Colors.white30,
+      icon: Icon(icon, shadows: const [Shadow(blurRadius: 6)]),
+    );
+  }
+}
+
+class _FiltersButton extends StatelessWidget {
+  const _FiltersButton({required this.active, required this.onPressed});
+
+  final bool active;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.black45,
+      shape: const StadiumBorder(),
+      child: InkWell(
+        customBorder: const StadiumBorder(),
+        onTap: onPressed,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.auto_awesome,
+                size: 20,
+                color: active ? const Color(0xFFFE2C55) : Colors.white,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Filtros',
+                style: TextStyle(
+                  color: onPressed == null ? Colors.white38 : Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -217,40 +294,6 @@ class _Placeholder extends StatelessWidget {
             FilledButton(onPressed: onRetry, child: const Text('Reintentar')),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _SideAction extends StatelessWidget {
-  const _SideAction({
-    required this.icon,
-    required this.label,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final String label;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = onPressed == null ? Colors.white30 : Colors.white;
-    return InkResponse(
-      onTap: onPressed,
-      radius: 32,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            icon,
-            color: color,
-            size: 30,
-            shadows: const [Shadow(blurRadius: 6)],
-          ),
-          const SizedBox(height: 4),
-          Text(label, style: TextStyle(color: color, fontSize: 12)),
-        ],
       ),
     );
   }

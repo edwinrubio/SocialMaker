@@ -76,7 +76,8 @@ class RecorderController extends ChangeNotifier {
       await _starting;
     } on PlatformException catch (e) {
       _finishRecordingState();
-      error = e.message;
+      debugPrint('startSegment failed: ${e.message}');
+      error = 'No se pudo iniciar la grabación. Intenta de nuevo.';
       notifyListeners();
     }
   }
@@ -97,7 +98,7 @@ class RecorderController extends ChangeNotifier {
   }
 
   void removeSegmentAt(int index) {
-    _deleteFile(_segments.removeAt(index).path);
+    _deleteSegmentFiles(_segments.removeAt(index));
     notifyListeners();
   }
 
@@ -107,16 +108,19 @@ class RecorderController extends ChangeNotifier {
 
   /// Deletes every fragment, e.g. after the final video was exported.
   void clearSegments() {
-    for (final segment in _segments) {
-      _deleteFile(segment.path);
-    }
+    _segments.forEach(_deleteSegmentFiles);
     _segments.clear();
     notifyListeners();
   }
 
   Future<void> setBackground(BackgroundType type, {String? path}) async {
-    await camera.setBackground(type, path: path);
-    backgroundType = type;
+    try {
+      await camera.setBackground(type, path: path);
+      backgroundType = type;
+      error = null;
+    } on PlatformException catch (e) {
+      error = e.message ?? 'No se pudo aplicar el fondo.';
+    }
     notifyListeners();
   }
 
@@ -140,8 +144,10 @@ class RecorderController extends ChangeNotifier {
     _ticker?.cancel();
   }
 
-  static void _deleteFile(String path) {
-    final file = File(path);
-    if (file.existsSync()) file.deleteSync();
+  static void _deleteSegmentFiles(RecordedSegment segment) {
+    for (final path in [segment.path, ?segment.thumbnailPath]) {
+      final file = File(path);
+      if (file.existsSync()) file.deleteSync();
+    }
   }
 }

@@ -46,7 +46,11 @@ public class BgCameraPlugin: NSObject, FlutterPlugin {
           DispatchQueue.main.async {
             switch outcome {
             case .success(let segment):
-              result(["path": segment.url.path, "durationMs": segment.durationMs])
+              result([
+                "path": segment.url.path,
+                "durationMs": segment.durationMs,
+                "thumbnailPath": segment.thumbnailURL?.path as Any,
+              ])
             case .failure(let error):
               result(FlutterError(code: "record_failed", message: error.localizedDescription, details: nil))
             }

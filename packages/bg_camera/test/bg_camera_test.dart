@@ -17,7 +17,11 @@ void main() {
             case 'initialize':
               return {'textureId': 7, 'width': 720, 'height': 1280};
             case 'stopSegment':
-              return {'path': '/tmp/a.mp4', 'durationMs': 1500};
+              return {
+                'path': '/tmp/a.mp4',
+                'durationMs': 1500,
+                'thumbnailPath': '/tmp/a.jpg',
+              };
             case 'mergeSegments':
               return '/tmp/out.mp4';
           }
@@ -38,6 +42,7 @@ void main() {
 
     expect(segment.path, '/tmp/a.mp4');
     expect(segment.duration, const Duration(milliseconds: 1500));
+    expect(segment.thumbnailPath, '/tmp/a.jpg');
   });
 
   test('setBackground and mergeSegments send arguments', () async {
