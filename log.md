@@ -12,3 +12,4 @@
 ## [2026-10-23] verificar | Android: foto y video de fondo OK en preview y en video exportado; merge 2 fragmentos = suma exacta de frames. iOS simulador: crash al fallar config de AVCaptureSession corregido.
 ## [2026-10-23] ejecutar | Límite de grabación 10 min. Tocar fragmento = seleccionar; ⌫ borra el seleccionado (o el último).
 ## [2026-10-23] verificar | iOS simulador (iPhone 17 Pro, iOS 26.5) con cámara simulada (video en loop, solo simulador): integration_test pasa — 3 fragmentos, seleccionar/borrar #2, unir, video final se reproduce. Corregido: export iOS fallaba con pista de audio vacía. Fondo en iOS no probable en simulador (Vision no trae el modelo ahí).
+## [2026-10-23] verificar | integration_test también pasa en emulador Android (sin paso de fondo; fondo Android ya verificado a mano).
