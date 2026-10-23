@@ -1,0 +1,52 @@
+{
+  "proyecto": "SocialMaker",
+  "esquema": 1,
+  "actualizado": "2026-10-23",
+  "seguridad": {
+    "modo": "desactivado",
+    "escaner": null,
+    "revalidar_dias": null,
+    "nota": "Gate de mcp-sentinel desactivado por decisión del humano. Ver AGENTS.md §8."
+  },
+  "skills": [
+    {
+      "nombre": "gsd",
+      "fuente": "skills-dir",
+      "marketplace": null,
+      "repo": null,
+      "plugin_id": "gsd@skills-dir",
+      "commit": null,
+      "aplica_si": "siempre",
+      "requerido": true,
+      "por_que": "Metodología planear/ejecutar/verificar; calza con el flujo de Hearness.",
+      "verificado": null,
+      "scan": null
+    },
+    {
+      "nombre": "graphify",
+      "fuente": "skills-dir",
+      "marketplace": null,
+      "repo": null,
+      "plugin_id": "graphify@skills-dir",
+      "commit": null,
+      "aplica_si": "siempre",
+      "requerido": true,
+      "por_que": "Grafo de conocimiento del codebase (Flutter + plugin nativo).",
+      "verificado": null,
+      "scan": null
+    },
+    {
+      "nombre": "frontend-design",
+      "fuente": "marketplace",
+      "marketplace": "claude-plugins-official",
+      "repo": "anthropics/claude-plugins-official",
+      "plugin_id": "frontend-design@claude-plugins-official",
+      "commit": null,
+      "aplica_si": "frontend",
+      "requerido": false,
+      "por_que": "Calidad de la UI de grabación y edición.",
+      "verificado": null,
+      "scan": null
+    }
+  ]
+}
