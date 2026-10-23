@@ -295,7 +295,8 @@ final class CameraPipeline: NSObject, FlutterTexture,
   /// output-sized buffer.
   private func composite(_ cameraBuffer: CVPixelBuffer) -> CVPixelBuffer? {
     let extent = CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight)
-    let camera = CIImage(cvPixelBuffer: cameraBuffer).aspectFilled(to: extent)
+    let frame = CIImage(cvPixelBuffer: cameraBuffer)
+    let camera = frame.aspectFilled(to: extent)
     var image = camera
 
     if let background = _background,
@@ -305,7 +306,11 @@ final class CameraPipeline: NSObject, FlutterTexture,
       // over time, which leaves a ghost of the previous pose when moving.
       try? VNImageRequestHandler(cvPixelBuffer: cameraBuffer).perform([segmentation])
       if let maskBuffer = segmentation.results?.first?.pixelBuffer {
-        let mask = Self.refined(CIImage(cvPixelBuffer: maskBuffer)).aspectFilled(to: extent)
+        // Vision's mask has its own size and aspect ratio: stretch it over the
+        // frame first, then crop it exactly like the camera.
+        let mask = Self.refined(CIImage(cvPixelBuffer: maskBuffer))
+          .stretched(to: frame.extent)
+          .aspectFilled(to: extent)
         image = camera.applyingFilter(
           "CIBlendWithMask",
           parameters: [kCIInputBackgroundImageKey: backgroundImage, kCIInputMaskImageKey: mask])
@@ -345,6 +350,13 @@ final class CameraPipeline: NSObject, FlutterTexture,
 }
 
 extension CIImage {
+  /// Scales the image to exactly `rect`, ignoring its aspect ratio.
+  func stretched(to rect: CGRect) -> CIImage {
+    transformed(
+      by: CGAffineTransform(scaleX: rect.width / extent.width, y: rect.height / extent.height)
+    ).transformed(by: CGAffineTransform(translationX: rect.minX, y: rect.minY))
+  }
+
   /// Scales and centers the image so it covers `rect`, cropping the overflow.
   func aspectFilled(to rect: CGRect) -> CIImage {
     let scale = max(rect.width / extent.width, rect.height / extent.height)
