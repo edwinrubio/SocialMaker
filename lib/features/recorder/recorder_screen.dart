@@ -9,6 +9,7 @@ import '../segments/segment_viewer.dart';
 import 'record_button.dart';
 import 'recorder_controller.dart';
 import 'segment_bar.dart';
+import '../../brand.dart';
 
 class RecorderScreen extends StatefulWidget {
   const RecorderScreen({super.key});
@@ -162,7 +163,7 @@ class _RecorderScreenState extends State<RecorderScreen>
               _ControlButton(
                 icon: Icons.check_circle,
                 tooltip: 'Listo: unir fragmentos',
-                color: const Color(0xFFFE2C55),
+                color: Brand.pink,
                 onPressed: hasSegments && idle ? _finish : null,
               ),
               _ControlButton(
@@ -210,7 +211,7 @@ class _Timer extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: recording ? const Color(0xFFFE2C55) : Colors.black45,
+        color: recording ? Brand.pink : Colors.black45,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
@@ -278,11 +279,7 @@ class _PillButton extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                icon,
-                size: 20,
-                color: active ? const Color(0xFFFE2C55) : Colors.white,
-              ),
+              Icon(icon, size: 20, color: active ? Brand.pink : Colors.white),
               const SizedBox(width: 8),
               Text(
                 label,

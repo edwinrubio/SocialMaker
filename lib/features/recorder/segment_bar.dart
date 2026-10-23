@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../brand.dart';
+
 /// Progress bar split into the recorded fragments, plus the one in progress.
 class SegmentBar extends StatelessWidget {
   const SegmentBar({
@@ -35,15 +37,12 @@ class SegmentBar extends StatelessWidget {
                           1.0,
                           double.infinity,
                         ),
-                        color: const Color(0xFFFE2C55),
+                        color: Brand.pink,
                       ),
                       Container(width: gap, color: Colors.white),
                     ],
                     if (current > Duration.zero)
-                      Container(
-                        width: widthOf(current),
-                        color: const Color(0xFFFE2C55),
-                      ),
+                      Container(width: widthOf(current), color: Brand.pink),
                   ],
                 ),
               ],

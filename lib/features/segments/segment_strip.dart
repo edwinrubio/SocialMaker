@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:bg_camera/bg_camera.dart';
 import 'package:flutter/material.dart';
 
+import '../../brand.dart';
+
 /// Thumbnails of the recorded fragments, shown under the camera preview.
 class SegmentStrip extends StatelessWidget {
   const SegmentStrip({
@@ -69,7 +71,7 @@ class _Thumbnail extends StatelessWidget {
           foregroundDecoration: BoxDecoration(
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: selected ? const Color(0xFFFE2C55) : Colors.transparent,
+              color: selected ? Brand.pink : Colors.transparent,
               width: 2.5,
             ),
           ),

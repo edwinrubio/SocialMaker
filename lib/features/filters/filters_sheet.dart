@@ -2,6 +2,8 @@ import 'package:bg_camera/bg_camera.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../brand.dart';
+
 /// Chosen background: a type plus the file for image/video backgrounds.
 typedef BackgroundChoice = ({BackgroundType type, String? path});
 
@@ -141,7 +143,7 @@ class _FiltersSheetState extends State<_FiltersSheet> {
                     child: Slider(
                       key: const Key('blur-strength'),
                       value: _blurStrength,
-                      activeColor: const Color(0xFFFE2C55),
+                      activeColor: Brand.pink,
                       semanticFormatterCallback: (v) =>
                           'Desenfoque ${(v * 100).round()} %',
                       onChanged: (value) {
@@ -178,7 +180,7 @@ class _FilterOption extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const accent = Color(0xFFFE2C55);
+    const accent = Brand.pink;
     return Semantics(
       button: true,
       selected: selected,

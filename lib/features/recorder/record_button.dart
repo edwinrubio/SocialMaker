@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
+import '../../brand.dart';
+
 /// Tap to start recording and tap again to stop, or hold to record and
 /// release to stop; while holding, sliding the finger up zooms in
 /// proportionally (half the screen height is full zoom). Recording starts on
@@ -119,7 +121,7 @@ class _RecordButtonState extends State<RecordButton>
 
   @override
   Widget build(BuildContext context) {
-    const red = Color(0xFFFE2C55);
+    const red = Brand.pink;
     final recording = widget.recording;
     final enabled = widget.enabled;
     return Semantics(

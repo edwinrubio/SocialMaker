@@ -4,6 +4,8 @@ import 'package:bg_camera/bg_camera.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart' hide Caption;
 
+import '../../brand.dart';
+
 /// Plays fragment [index] full screen so the user can decide whether to keep
 /// it. Resolves to true when they choose to delete it.
 Future<bool> showSegmentViewer(
@@ -131,7 +133,7 @@ class _SegmentViewerState extends State<_SegmentViewer> {
                 key: const Key('segment-scrubber'),
                 value: position,
                 max: total > 0 ? total : 1,
-                activeColor: const Color(0xFFFE2C55),
+                activeColor: Brand.pink,
                 inactiveColor: Colors.white24,
                 semanticFormatterCallback: (ms) =>
                     _clock(Duration(milliseconds: ms.round())),
@@ -237,7 +239,7 @@ class _SegmentViewerState extends State<_SegmentViewer> {
                       Expanded(
                         child: FilledButton.icon(
                           style: FilledButton.styleFrom(
-                            backgroundColor: const Color(0xFFFE2C55),
+                            backgroundColor: Brand.pink,
                             minimumSize: const Size.fromHeight(52),
                           ),
                           onPressed: () => Navigator.pop(context, false),

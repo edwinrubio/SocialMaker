@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'features/recorder/recorder_screen.dart';
+import 'brand.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -19,8 +20,9 @@ class SocialMakerApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         brightness: Brightness.dark,
+        scaffoldBackgroundColor: Brand.night,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFFFE2C55),
+          seedColor: Brand.pink,
           brightness: Brightness.dark,
         ),
       ),

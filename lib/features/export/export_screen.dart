@@ -12,6 +12,7 @@ import 'package:video_player/video_player.dart' hide Caption;
 import '../recorder/recorder_controller.dart';
 import '../subtitles/caption_grouper.dart';
 import '../subtitles/captions_editor.dart';
+import '../../brand.dart';
 
 /// Merges the fragments, previews the result, optionally adds subtitles, and
 /// saves or shares it.
@@ -209,7 +210,7 @@ class _ExportScreenState extends State<ExportScreen> {
                     child: FilledButton.icon(
                       onPressed: ready && !_saved ? _save : null,
                       style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFFFE2C55),
+                        backgroundColor: Brand.pink,
                         padding: const EdgeInsets.symmetric(vertical: 16),
                       ),
                       icon: _busy
