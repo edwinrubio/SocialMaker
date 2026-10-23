@@ -1,9 +1,13 @@
+import 'dart:async';
+
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
-/// Hold to record, release to stop; while holding, sliding the finger up
-/// zooms in proportionally (half the screen height is full zoom). Uses raw
-/// pointer events so recording starts immediately instead of after the
-/// long-press delay.
+/// Tap to start recording and tap again to stop, or hold to record and
+/// release to stop; while holding, sliding the finger up zooms in
+/// proportionally (half the screen height is full zoom). Recording starts on
+/// touch down either way (raw pointer events, no long-press delay); the
+/// release decides: a quick touch that barely moved keeps recording.
 class RecordButton extends StatefulWidget {
   const RecordButton({
     super.key,
@@ -27,23 +31,68 @@ class RecordButton extends StatefulWidget {
 }
 
 class _RecordButtonState extends State<RecordButton> {
+  static const _tapTimeout = Duration(milliseconds: 300);
+
   double? _startY;
 
+  /// The press is a hold (stop on release), not a tap.
+  bool _held = false;
+  Timer? _holdTimer;
+
+  /// Recording started by a tap: the next touch stops it.
+  bool _latched = false;
+
+  /// The touch that stopped a tap recording; its release does nothing.
+  bool _stopping = false;
+
+  @override
+  void didUpdateWidget(RecordButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Stopped from outside (time limit, error).
+    if (oldWidget.recording && !widget.recording) _latched = false;
+  }
+
+  @override
+  void dispose() {
+    _holdTimer?.cancel();
+    super.dispose();
+  }
+
   void _down(PointerDownEvent event) {
+    if (_latched) {
+      _latched = false;
+      _stopping = true;
+      widget.onStop();
+      return;
+    }
+    if (!widget.enabled) return;
     _startY = event.position.dy;
+    _held = false;
+    _holdTimer = Timer(_tapTimeout, () => _held = true);
     widget.onStart();
   }
 
   void _move(PointerMoveEvent event) {
     final startY = _startY;
     if (startY == null) return;
+    if ((startY - event.position.dy).abs() > kTouchSlop) _held = true;
     final travel = MediaQuery.sizeOf(context).height * 0.5;
     widget.onZoom(((startY - event.position.dy) / travel).clamp(0.0, 1.0));
   }
 
   void _end() {
-    if (_startY != null) widget.onZoom(0);
+    _holdTimer?.cancel();
+    if (_stopping) {
+      _stopping = false;
+      return;
+    }
+    if (_startY == null) return;
     _startY = null;
+    if (!_held) {
+      _latched = true;
+      return;
+    }
+    widget.onZoom(0);
     widget.onStop();
   }
 
@@ -55,9 +104,10 @@ class _RecordButtonState extends State<RecordButton> {
     return Semantics(
       button: true,
       label:
-          'Mantén presionado para grabar; desliza hacia arriba para hacer zoom',
+          'Toca para grabar o mantén presionado; '
+          'desliza hacia arriba para hacer zoom',
       child: Listener(
-        onPointerDown: enabled ? _down : null,
+        onPointerDown: _down,
         onPointerMove: _move,
         onPointerUp: (_) => _end(),
         onPointerCancel: (_) => _end(),

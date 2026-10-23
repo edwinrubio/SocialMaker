@@ -54,6 +54,14 @@ void main() {
     await wait(tester, const Duration(seconds: 2));
   }
 
+  /// Taps to start recording and taps again after [duration] to stop.
+  Future<void> tapRecord(WidgetTester tester, Duration duration) async {
+    await tester.tap(find.byType(RecordButton));
+    await wait(tester, duration);
+    await tester.tap(find.byType(RecordButton));
+    await wait(tester, const Duration(seconds: 2));
+  }
+
   testWidgets('record, select and delete, background, merge', (tester) async {
     await tester.pumpWidget(const SocialMakerApp());
     await wait(tester, const Duration(seconds: 5));
@@ -78,7 +86,7 @@ void main() {
     }
 
     await hold(tester, const Duration(milliseconds: 2500));
-    await hold(tester, const Duration(milliseconds: 1500));
+    await tapRecord(tester, const Duration(milliseconds: 1500));
     await hold(tester, const Duration(seconds: 3), slideUp: 250);
     expect(find.bySemanticsLabel(RegExp('^Fragmento 3')), findsOneWidget);
     await step(tester, 'three-fragments');

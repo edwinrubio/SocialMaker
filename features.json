@@ -16,7 +16,7 @@
     {
       "id": "grabacion-fragmentos",
       "nombre": "Grabación por fragmentos",
-      "descripcion": "Preview de cámara; mantener presionado graba un fragmento, soltar lo corta. Barra segmentada con límite de 60 s.",
+      "descripcion": "Preview de cámara; un toque inicia y otro toque para el fragmento, o mantener presionado graba hasta soltar (con zoom deslizando). Límite de 10 min.",
       "estado": "en-revision",
       "responsable": "Ejecutor-Flutter / Ejecutor-iOS / Ejecutor-Android",
       "criterio": "En dispositivo físico (iOS y Android): 3 presiones generan 3 archivos de video con audio y la barra muestra 3 segmentos.",

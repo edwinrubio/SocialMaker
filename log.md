@@ -16,3 +16,4 @@
 ## [2026-10-23] ejecutar | v2: zoom deslizando hacia arriba, Configuración (720p/1080p/4K), Filtros → Desenfocar, Android cámara por GPU (SurfaceTexture OES)
 ## [2026-10-23] ejecutar | v2 iOS: subtítulos con IA de Apple (SpeechAnalyzer, fallback SFSpeechRecognizer), editor por frase, compartir (TikTok/Instagram/Shorts/Más)
 ## [2026-10-23] verificar | Simulador iOS: integration_test pasa a 1080p; subtítulos quemados visibles en sus tiempos. Corregido: crash SIGTRAP de AVVideoCompositionCoreAnimationTool (ahora Core Image) y audio faltante de la cámara simulada (solo simulador).
+## [2026-10-23] ejecutar | Grabar con un toque (toque inicia, toque para); mantener presionado + zoom sigue igual. Widget tests + integration_test iOS verdes.
