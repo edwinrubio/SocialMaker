@@ -4,15 +4,25 @@
 
 # SocialMaker
 
-**Graba videos por partes, como en TikTok, y únelos en un solo clip listo para compartir.**
-Cambia o desenfoca el fondo detrás de ti, graba con las dos cámaras a la vez, agrega subtítulos automáticos y publica directo en TikTok, Instagram o YouTube Shorts.
+**Lo mejor de las apps de grabación de video, en una sola app, para crear contenido rápido y publicarlo en tus redes con un toque.**
+
+Cada app de video tiene algo que la hace buena: grabar por partes como TikTok, cambiar el fondo como en una videollamada, grabar con las dos cámaras como BeReal, subtítulos automáticos como CapCut… pero tienes que saltar entre varias para armar un solo video. SocialMaker junta esas funciones en un solo flujo:
+
+> **grabar → ajustar → publicar**, sin salir de la app.
+
+- 🎬 Graba por fragmentos, con zoom y cambiando de cámara sin cortar.
+- 🧑‍🎨 Cambia o desenfoca el fondo detrás de ti.
+- 🖼️ Graba con las dos cámaras a la vez.
+- 💬 Agrega subtítulos automáticos y corrígelos.
+- 📤 Sube el resultado a TikTok, Instagram o YouTube Shorts en un toque.
 
 App para **iPhone y Android** hecha en Flutter. Todo se procesa **en tu teléfono**: sin cuentas, sin servidores y sin enviar tus videos ni tu voz a ningún lado.
 
 <p align="center">
-  <img src="docs/store/screenshots/ios/1_grabar.png" alt="Grabar por fragmentos" width="230">
-  <img src="docs/store/screenshots/ios/2_fragmento.png" alt="Revisar un fragmento" width="230">
-  <img src="docs/store/screenshots/ios/3_video.png" alt="Video final y compartir" width="230">
+  <img src="docs/store/screenshots/ios/1_grabar.png" alt="Grabar por fragmentos" width="190">
+  <img src="docs/store/screenshots/ios/2_fragmento.png" alt="Revisar un fragmento" width="190">
+  <img src="docs/store/screenshots/ios/3_dos_camaras.png" alt="Dos cámaras a la vez" width="190">
+  <img src="docs/store/screenshots/ios/4_video.png" alt="Video final y compartir" width="190">
 </p>
 
 ---
@@ -77,7 +87,7 @@ Toca **Filtros → Fondos**:
 
 ### 4. Dos cámaras
 
-1. Toca **2 cámaras** (solo aparece si tu teléfono lo soporta).
+1. Toca **2 cámaras**. Si tu teléfono no lo permite, la app te lo dice.
 2. **Arrastra** la ventanita a donde quieras. Se queda ahí y se recuerda para la próxima vez.
 3. **Toca** la ventanita, o el botón ⟲, para intercambiar las cámaras. También funciona mientras grabas.
 
@@ -134,8 +144,8 @@ Política completa: [`docs/store/privacy-policy.md`](docs/store/privacy-policy.m
 
 ## Preguntas frecuentes
 
-**No veo el botón "2 cámaras".**
-Tu teléfono no puede usar la cámara delantera y la trasera al mismo tiempo.
+**Toco "2 cámaras" y dice que mi teléfono no lo permite.**
+Tu teléfono no puede usar la cámara delantera y la trasera al mismo tiempo. En Android esto depende del fabricante (funciona, por ejemplo, en Pixel 6 o más nuevos y en varios Samsung); en iPhone, desde el XS.
 
 **¿Por qué 4K o 60 fps aparecen apagados?**
 La cámara o el codificador de video de tu teléfono no los soportan con esa combinación de resolución y fps.

@@ -271,7 +271,12 @@ class RecorderController extends ChangeNotifier {
 
   /// Turns recording with both cameras on or off (not while recording).
   Future<void> toggleDual() async {
-    if (_recording || !dualSupported || preview == null) return;
+    if (_recording || preview == null) return;
+    if (!dualSupported) {
+      error = 'Este teléfono no permite usar las dos cámaras a la vez.';
+      notifyListeners();
+      return;
+    }
     final enable = !dualEnabled;
     try {
       if (enable) await camera.setPictureInPicture(pipRectAt(pipOrigin));

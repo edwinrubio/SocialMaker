@@ -294,6 +294,17 @@ void main() {
     expect(controller.dualEnabled, isTrue, reason: 'locked while recording');
   });
 
+  test('dual camera explains itself on phones without it', () async {
+    camera.dualSupported = false;
+    controller = RecorderController(camera: camera, settings: settings);
+    await controller.initialize();
+
+    await controller.toggleDual();
+    expect(controller.dualEnabled, isFalse);
+    expect(camera.dualCalls, isEmpty);
+    expect(controller.error, contains('dos cámaras'));
+  });
+
   test('the window moves live, stays in the frame, saved on release', () async {
     await controller.setPipOrigin(const Offset(0.3, 0.3));
     expect(camera.pipRects.last.topLeft, const Offset(0.3, 0.3));

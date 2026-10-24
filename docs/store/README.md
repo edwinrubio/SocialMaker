@@ -9,7 +9,7 @@ Todo lo que se pudo preparar sin tus cuentas está aquí. Lo marcado **(tú)** r
 | Archivo iOS | `build/ios/archive/Runner.xcarchive` (`flutter build ipa --release --export-options-plist=ios/store/ExportOptions.plist`) |
 | Textos de la ficha (es / en) | `listing.md` |
 | Política de privacidad | `privacy-policy.md` (falta tu correo de soporte y publicarla en una URL) |
-| Capturas iPhone 6,9" (1320×2868) | `screenshots/ios/` |
+| Capturas iPhone 6,9" (1320×2868), sin personas (escena virtual) | `screenshots/ios/` |
 | Capturas Android (1080×1920) | `screenshots/android/` |
 | Gráfico destacado Play (1024×500) | `feature_graphic.png` |
 | Ícono 1024² | `../../assets/brand/icon.png` |
