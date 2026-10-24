@@ -96,7 +96,9 @@ void main() {
     expect(find.text('Borrar'), findsOneWidget);
     await step(tester, 'viewer-2');
 
-    // Drag the scrubber to about the middle of the fragment.
+    // Pause (so it doesn't loop back to 0), then drag the scrubber.
+    await tester.tap(find.byKey(const Key('segment-viewer-video')));
+    await wait(tester, const Duration(milliseconds: 500));
     final scrubber = find.byKey(const Key('segment-scrubber'));
     await tester.drag(scrubber, const Offset(60, 0));
     await wait(tester, const Duration(seconds: 1));
@@ -108,6 +110,40 @@ void main() {
     await wait(tester, const Duration(seconds: 1));
     expect(find.bySemanticsLabel(RegExp('^Fragmento 3')), findsNothing);
     await step(tester, 'deleted-2');
+
+    // Switch cameras in the middle of a fragment.
+    await tester.tap(find.byType(RecordButton));
+    await wait(tester, const Duration(milliseconds: 1500));
+    await tester.tap(find.byIcon(Icons.cameraswitch_outlined));
+    await wait(tester, const Duration(milliseconds: 1500));
+    await tester.tap(find.byType(RecordButton));
+    await wait(tester, const Duration(seconds: 2));
+    expect(find.bySemanticsLabel(RegExp('^Fragmento 3')), findsOneWidget);
+    await step(tester, 'switched-while-recording');
+
+    if (await BgCamera().dualCameraSupported()) {
+      await tester.tap(find.text('Dos cámaras'));
+      await wait(tester, const Duration(seconds: 2));
+      expect(find.byKey(const Key('pip-window')), findsOneWidget);
+      await step(tester, 'dual');
+
+      await tester.drag(
+        find.byKey(const Key('pip-window')),
+        const Offset(-250, -400),
+      );
+      await wait(tester, const Duration(seconds: 1));
+      await step(tester, 'dual-top-left');
+
+      // Swap the cameras in the middle of a fragment.
+      await tester.tap(find.byType(RecordButton));
+      await wait(tester, const Duration(milliseconds: 1500));
+      await tester.tap(find.byIcon(Icons.cameraswitch_outlined));
+      await wait(tester, const Duration(milliseconds: 1500));
+      await tester.tap(find.byType(RecordButton));
+      await wait(tester, const Duration(seconds: 2));
+      expect(find.bySemanticsLabel(RegExp('^Fragmento 4')), findsOneWidget);
+      await step(tester, 'dual-recorded');
+    }
 
     await tester.tap(find.byIcon(Icons.check_circle));
     await wait(tester, const Duration(seconds: 8));

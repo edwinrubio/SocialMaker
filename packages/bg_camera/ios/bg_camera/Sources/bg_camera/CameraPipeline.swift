@@ -8,6 +8,7 @@ enum CameraError: LocalizedError {
   case cannotAddInput
   case alreadyRecording
   case notRecording
+  case dualUnsupported
 
   var errorDescription: String? {
     switch self {
@@ -15,6 +16,7 @@ enum CameraError: LocalizedError {
     case .cannotAddInput: return "Cannot attach camera or microphone to the session"
     case .alreadyRecording: return "A segment is already being recorded"
     case .notRecording: return "No segment is being recorded"
+    case .dualUnsupported: return "This device cannot use both cameras at once"
     }
   }
 }
@@ -51,6 +53,10 @@ enum OutputResolution: String, CaseIterable {
 /// feeds the composited frames to a Flutter texture and, while recording, to a
 /// `SegmentWriter`.
 ///
+/// In dual mode both cameras run at once (AVCaptureMultiCamSession): the main
+/// one fills the frame and the other is drawn as a picture-in-picture window,
+/// so it is part of the recording too.
+///
 /// All frame work happens on `queue`; public mutators hop onto it.
 final class CameraPipeline: NSObject, FlutterTexture,
   AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate
@@ -62,12 +68,22 @@ final class CameraPipeline: NSObject, FlutterTexture,
   private(set) var textureId: Int64 = 0
 
   private let textures: FlutterTextureRegistry
-  private let session = AVCaptureSession()
+  private var session = AVCaptureSession()
   private let queue = DispatchQueue(label: "bg_camera.pipeline")
+  /// The camera in single mode; the back camera in dual mode.
   private let videoOutput = AVCaptureVideoDataOutput()
+  /// The front camera in dual mode.
+  private let frontOutput = AVCaptureVideoDataOutput()
   private let audioOutput = AVCaptureAudioDataOutput()
-  private var videoInput: AVCaptureDeviceInput?
+  private var cameraInputs: [AVCaptureDevice.Position: AVCaptureDeviceInput] = [:]
+  /// The camera that fills the frame.
   private var position: AVCaptureDevice.Position = .front
+
+  private var dual = false
+  /// Latest frame of the picture-in-picture camera (dual mode).
+  private var latestPip: CVPixelBuffer?
+  /// Picture-in-picture window as fractions of the frame, top-left origin.
+  private var pipRect = CGRect(x: 0.58, y: 0.42, width: 0.28, height: 0.28)
 
   private let ciContext = CIContext(options: [.cacheIntermediates: false])
   private let segmentation: VNGeneratePersonSegmentationRequest = {
@@ -94,6 +110,22 @@ final class CameraPipeline: NSObject, FlutterTexture,
     self.textures = textures
     self.resolution = resolution
     super.init()
+    for output in [videoOutput, frontOutput] {
+      output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+      output.alwaysDiscardsLateVideoFrames = true
+      output.setSampleBufferDelegate(self, queue: queue)
+    }
+    audioOutput.setSampleBufferDelegate(self, queue: queue)
+  }
+
+  /// Both cameras at once: real devices that support it, or the simulator
+  /// feed (shown twice) so the layout can be tested.
+  static var dualSupported: Bool {
+    #if targetEnvironment(simulator)
+      return SimulatorCameraFeed.videoURL != nil
+    #else
+      return AVCaptureMultiCamSession.isMultiCamSupported
+    #endif
   }
 
   func start(position: AVCaptureDevice.Position) throws {
@@ -128,13 +160,9 @@ final class CameraPipeline: NSObject, FlutterTexture,
     guard session.canAddInput(micInput) else { throw CameraError.cannotAddInput }
     session.addInput(micInput)
 
-    videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
-    videoOutput.alwaysDiscardsLateVideoFrames = true
-    videoOutput.setSampleBufferDelegate(self, queue: queue)
     guard session.canAddOutput(videoOutput) else { throw CameraError.cannotAddInput }
     session.addOutput(videoOutput)
 
-    audioOutput.setSampleBufferDelegate(self, queue: queue)
     guard session.canAddOutput(audioOutput) else { throw CameraError.cannotAddInput }
     session.addOutput(audioOutput)
 
@@ -157,11 +185,18 @@ final class CameraPipeline: NSObject, FlutterTexture,
     }
   }
 
+  /// Works while recording. In dual mode it swaps the main and the
+  /// picture-in-picture cameras.
   func switchCamera() {
     queue.async {
       let next: AVCaptureDevice.Position = self.position == .front ? .back : .front
+      if self.dual {
+        self.position = next
+        self.latestPip = nil  // Until the other camera's next frame.
+        return
+      }
       self.session.beginConfiguration()
-      if let current = self.videoInput { self.session.removeInput(current) }
+      if let current = self.cameraInputs[self.position] { self.session.removeInput(current) }
       do {
         try self.attachCamera(position: next)
         self.position = next
@@ -176,13 +211,54 @@ final class CameraPipeline: NSObject, FlutterTexture,
   /// [fraction] 0...1 over the useful zoom range (capped at 10×).
   func setZoom(_ fraction: Double) {
     queue.async {
-      guard let device = self.videoInput?.device, (try? device.lockForConfiguration()) != nil else {
+      guard let device = self.cameraInputs[self.position]?.device,
+        (try? device.lockForConfiguration()) != nil
+      else {
         return
       }
       let maxZoom = min(device.activeFormat.videoMaxZoomFactor, 10)
       device.videoZoomFactor = 1 + CGFloat(min(max(fraction, 0), 1)) * (maxZoom - 1)
       device.unlockForConfiguration()
     }
+  }
+
+  /// Rebuilds the capture session with one or both cameras. Not while recording.
+  func setDual(_ enabled: Bool, completion: @escaping (Error?) -> Void) {
+    queue.async {
+      guard enabled != self.dual else { return completion(nil) }
+      #if targetEnvironment(simulator)
+        if self.simulatorFeed != nil {
+          self.dual = enabled
+          self.latestPip = nil
+          return completion(nil)
+        }
+      #endif
+      self.session.stopRunning()
+      self.teardownSession()
+      var failure: Error?
+      do {
+        if enabled {
+          try self.configureMultiCam()
+        } else {
+          try self.configureSingle()
+        }
+        self.dual = enabled
+      } catch {
+        NSLog("bg_camera: cannot switch dual mode: \(error)")
+        failure = error
+        self.teardownSession()
+        try? self.configureSingle()
+        self.dual = false
+      }
+      self.latestPip = nil
+      self.session.startRunning()
+      completion(failure)
+    }
+  }
+
+  /// [rect]: fractions of the frame, top-left origin.
+  func setPictureInPicture(_ rect: CGRect) {
+    queue.async { self.pipRect = rect }
   }
 
   func startSegment() throws {
@@ -225,6 +301,13 @@ final class CameraPipeline: NSObject, FlutterTexture,
       return
     }
     guard let cameraBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+    if dual {
+      let source: AVCaptureDevice.Position = output === frontOutput ? .front : .back
+      if source != position {
+        latestPip = cameraBuffer
+        return
+      }
+    }
     process(cameraBuffer, at: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
   }
 
@@ -259,7 +342,12 @@ final class CameraPipeline: NSObject, FlutterTexture,
       guard
         let feed = SimulatorCameraFeed(
           queue: queue,
-          onFrame: { [weak self] buffer, time in self?.process(buffer, at: time) },
+          onFrame: { [weak self] buffer, time in
+            guard let self else { return }
+            // One feed plays both cameras in dual mode.
+            if self.dual { self.latestPip = buffer }
+            self.process(buffer, at: time)
+          },
           onAudio: { [weak self] sample in self?.writer?.appendAudio(sample) })
       else { throw CameraError.noDevice }
       simulatorFeed = feed
@@ -275,11 +363,98 @@ final class CameraPipeline: NSObject, FlutterTexture,
     let input = try AVCaptureDeviceInput(device: device)
     guard session.canAddInput(input) else { throw CameraError.cannotAddInput }
     session.addInput(input)
-    videoInput = input
+    cameraInputs = [position: input]
+  }
+
+  /// A fresh single-camera session with the current main camera. On `queue`.
+  private func configureSingle() throws {
+    session = AVCaptureSession()
+    session.beginConfiguration()
+    defer { session.commitConfiguration() }
+    try configureSession(position: position)
+  }
+
+  private func teardownSession() {
+    session.beginConfiguration()
+    session.inputs.forEach(session.removeInput)
+    session.outputs.forEach(session.removeOutput)
+    session.commitConfiguration()
+    cameraInputs = [:]
+  }
+
+  /// Back camera into `videoOutput`, front into `frontOutput`, each with an
+  /// explicit connection, plus the microphone. On `queue`.
+  private func configureMultiCam() throws {
+    guard AVCaptureMultiCamSession.isMultiCamSupported else { throw CameraError.dualUnsupported }
+    let multiCam = AVCaptureMultiCamSession()
+    session = multiCam
+    multiCam.beginConfiguration()
+    defer { multiCam.commitConfiguration() }
+
+    // Both feeds are at most 1080p: 4K is not available with two cameras.
+    let targetWidth = min(resolution.height, 1920)
+    for (position, output) in [(AVCaptureDevice.Position.back, videoOutput), (.front, frontOutput)] {
+      guard
+        let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
+      else { throw CameraError.noDevice }
+      let input = try AVCaptureDeviceInput(device: device)
+      guard multiCam.canAddInput(input), multiCam.canAddOutput(output) else {
+        throw CameraError.cannotAddInput
+      }
+      multiCam.addInputWithNoConnections(input)
+      multiCam.addOutputWithNoConnections(output)
+      guard
+        let port = input.ports(
+          for: .video, sourceDeviceType: device.deviceType, sourceDevicePosition: position
+        ).first
+      else { throw CameraError.cannotAddInput }
+      let connection = AVCaptureConnection(inputPorts: [port], output: output)
+      guard multiCam.canAddConnection(connection) else { throw CameraError.cannotAddInput }
+      multiCam.addConnection(connection)
+      orient(connection, mirrored: position == .front)
+      try selectMultiCamFormat(device, width: targetWidth)
+      cameraInputs[position] = input
+    }
+
+    guard let mic = AVCaptureDevice.default(for: .audio) else { throw CameraError.noDevice }
+    let micInput = try AVCaptureDeviceInput(device: mic)
+    guard multiCam.canAddInput(micInput), multiCam.canAddOutput(audioOutput) else {
+      throw CameraError.cannotAddInput
+    }
+    multiCam.addInputWithNoConnections(micInput)
+    multiCam.addOutputWithNoConnections(audioOutput)
+    guard let micPort = micInput.ports.first(where: { $0.mediaType == .audio }) else {
+      throw CameraError.cannotAddInput
+    }
+    let micConnection = AVCaptureConnection(inputPorts: [micPort], output: audioOutput)
+    guard multiCam.canAddConnection(micConnection) else { throw CameraError.cannotAddInput }
+    multiCam.addConnection(micConnection)
+  }
+
+  /// The smallest multi-camera format at least [width] wide (landscape), or
+  /// the largest one there is.
+  private func selectMultiCamFormat(_ device: AVCaptureDevice, width: Int) throws {
+    let formats = device.formats.filter(\.isMultiCamSupported).sorted {
+      CMVideoFormatDescriptionGetDimensions($0.formatDescription).width
+        < CMVideoFormatDescriptionGetDimensions($1.formatDescription).width
+    }
+    guard
+      let format = formats.first(where: {
+        CMVideoFormatDescriptionGetDimensions($0.formatDescription).width >= width
+      }) ?? formats.last
+    else { throw CameraError.dualUnsupported }
+    try device.lockForConfiguration()
+    device.activeFormat = format
+    device.unlockForConfiguration()
   }
 
   private func configureVideoConnection() {
     guard let connection = videoOutput.connection(with: .video) else { return }
+    orient(connection, mirrored: position == .front)
+  }
+
+  /// Portrait, mirrored for the front camera (like a mirror).
+  private func orient(_ connection: AVCaptureConnection, mirrored: Bool) {
     if #available(iOS 17.0, *) {
       if connection.isVideoRotationAngleSupported(90) { connection.videoRotationAngle = 90 }
     } else if connection.isVideoOrientationSupported {
@@ -287,7 +462,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
     }
     if connection.isVideoMirroringSupported {
       connection.automaticallyAdjustsVideoMirroring = false
-      connection.isVideoMirrored = position == .front
+      connection.isVideoMirrored = mirrored
     }
   }
 
@@ -317,9 +492,39 @@ final class CameraPipeline: NSObject, FlutterTexture,
       }
     }
 
+    if dual, let pip = latestPip {
+      image = Self.addingPictureInPicture(CIImage(cvPixelBuffer: pip), to: image, at: pipRect, in: extent)
+    }
+
     guard let output = makeOutputBuffer() else { return nil }
     ciContext.render(image.cropped(to: extent), to: output)
     return output
+  }
+
+  /// Draws [pip] as a rounded window with a white rim at [rect] (fractions of
+  /// [extent], top-left origin).
+  private static func addingPictureInPicture(
+    _ pip: CIImage, to image: CIImage, at rect: CGRect, in extent: CGRect
+  ) -> CIImage {
+    // Core Image's origin is bottom-left.
+    let frame = CGRect(
+      x: rect.minX * extent.width, y: (1 - rect.maxY) * extent.height,
+      width: rect.width * extent.width, height: rect.height * extent.height
+    ).integral
+    let radius = frame.width * 0.1
+    let rim = frame.width * 0.02
+    func roundedRect(_ rect: CGRect, radius: CGFloat, color: CIColor) -> CIImage {
+      CIFilter(
+        name: "CIRoundedRectangleGenerator",
+        parameters: ["inputExtent": CIVector(cgRect: rect), "inputRadius": radius, "inputColor": color]
+      )?.outputImage ?? CIImage.empty()
+    }
+    let border = roundedRect(
+      frame.insetBy(dx: -rim, dy: -rim), radius: radius + rim, color: CIColor(red: 1, green: 1, blue: 1, alpha: 0.9))
+    let mask = roundedRect(frame, radius: radius, color: .white)
+    return pip.aspectFilled(to: frame).applyingFilter(
+      "CIBlendWithMask",
+      parameters: [kCIInputBackgroundImageKey: border.composited(over: image), kCIInputMaskImageKey: mask])
   }
 
   /// Pulls the mask's edge slightly inside the person and softens it, so no

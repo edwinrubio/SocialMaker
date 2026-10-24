@@ -104,6 +104,19 @@ class FakeBgCamera implements BgCamera {
   @override
   Future<void> switchCamera() async {}
 
+  bool dualSupported = true;
+  final dualCalls = <bool>[];
+  final pipRects = <Rect>[];
+
+  @override
+  Future<bool> dualCameraSupported() async => dualSupported;
+
+  @override
+  Future<void> setDualCamera(bool enabled) async => dualCalls.add(enabled);
+
+  @override
+  Future<void> setPictureInPicture(Rect rect) async => pipRects.add(rect);
+
   @override
   Future<void> dispose() async => disposeCount++;
 }
@@ -251,6 +264,28 @@ void main() {
     expect(camera.blurStrengths, [0.8, 0.8]);
     expect(settings.values[RecorderController.blurStrengthKey], '0.8');
   });
+
+  test(
+    'dual camera turns on with the saved corner, not while recording',
+    () async {
+      settings.values[RecorderController.pipCornerKey] = 'topLeft';
+      controller = RecorderController(camera: camera, settings: settings);
+      await controller.initialize();
+
+      await controller.toggleDual();
+      expect(controller.dualEnabled, isTrue);
+      expect(camera.dualCalls, [true]);
+      expect(camera.pipRects.last, pipRectFor(PipCorner.topLeft));
+
+      await controller.startSegment();
+      await controller.toggleDual();
+      expect(controller.dualEnabled, isTrue, reason: 'locked while recording');
+
+      await controller.setPipCorner(PipCorner.bottomRight);
+      expect(camera.pipRects.last, pipRectFor(PipCorner.bottomRight));
+      expect(settings.values[RecorderController.pipCornerKey], 'bottomRight');
+    },
+  );
 
   test('changing resolution clears fragments, saves it and reopens', () async {
     await record(const Duration(seconds: 1));

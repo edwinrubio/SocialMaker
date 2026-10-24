@@ -15,6 +15,9 @@ class Programs {
     /** One pass of a separable Gaussian blur; set [Program.texelStep] per direction. */
     val blur = Program(BLUR_FRAGMENT)
 
+    /** Second camera as a rounded window with a white rim; set [Program.pipSize]. */
+    val pip = Program(PIP_FRAGMENT)
+
     class Program(
         fragmentSource: String,
     ) {
@@ -26,9 +29,13 @@ class Programs {
         private val backgroundScaleLocation = GLES20.glGetUniformLocation(id, "uBackgroundScale")
         private val backgroundMatrixLocation = GLES20.glGetUniformLocation(id, "uBackgroundMatrix")
         private val texelStepLocation = GLES20.glGetUniformLocation(id, "uTexelStep")
+        private val pipSizeLocation = GLES20.glGetUniformLocation(id, "uPipSize")
 
         var backgroundScale = floatArrayOf(1f, 1f)
         var texelStep = floatArrayOf(0f, 0f)
+
+        /** Window size in pixels. */
+        var pipSize = floatArrayOf(1f, 1f)
 
         fun use(
             quad: FloatBuffer,
@@ -49,6 +56,7 @@ class Programs {
             GLES20.glUniform2fv(backgroundScaleLocation, 1, backgroundScale, 0)
             GLES20.glUniformMatrix4fv(backgroundMatrixLocation, 1, false, backgroundMatrix, 0)
             GLES20.glUniform2fv(texelStepLocation, 1, texelStep, 0)
+            GLES20.glUniform2fv(pipSizeLocation, 1, pipSize, 0)
             GLES20.glUniform1i(GLES20.glGetUniformLocation(id, "uCamera"), 0)
             GLES20.glUniform1i(GLES20.glGetUniformLocation(id, "uMask"), 1)
             GLES20.glUniform1i(GLES20.glGetUniformLocation(id, "uBackground"), 2)
@@ -67,8 +75,10 @@ class Programs {
             varying vec2 vCameraUv;
             varying vec2 vMaskUv;
             varying vec2 vBackgroundUv;
+            varying vec2 vQuadUv;
             void main() {
                 gl_Position = aPosition;
+                vQuadUv = aTexCoord;
                 // Upright (portrait, mirrored for selfie) coordinates; the mask is upright too.
                 vMaskUv = (aTexCoord - 0.5) * uCameraScale + 0.5;
                 // The camera texture is in sensor orientation.
@@ -106,6 +116,24 @@ class Programs {
                 gl_FragColor = mix(background, camera, person);
             }
             """
+
+        // Rounded-rectangle signed distance (negative inside), in pixels.
+        const val PIP_FRAGMENT = """
+            #extension GL_OES_EGL_image_external : require
+            precision mediump float;
+            varying vec2 vCameraUv;
+            varying vec2 vQuadUv;
+            uniform samplerExternalOES uCamera;
+            uniform vec2 uPipSize;
+            void main() {
+                float radius = uPipSize.x * 0.1;
+                float rim = uPipSize.x * 0.02;
+                vec2 q = abs(vQuadUv * uPipSize - uPipSize * 0.5) - (uPipSize * 0.5 - radius);
+                float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
+                if (d > 0.0) discard;
+                gl_FragColor = d > -rim ? vec4(1.0, 1.0, 1.0, 1.0) : texture2D(uCamera, vCameraUv);
+            }
+        """
 
         // 9-tap Gaussian; the source is a framebuffer texture (bottom-left origin).
         const val BLUR_FRAGMENT = """

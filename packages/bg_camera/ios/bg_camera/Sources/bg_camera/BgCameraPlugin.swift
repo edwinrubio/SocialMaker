@@ -56,6 +56,28 @@ public class BgCameraPlugin: NSObject, FlutterPlugin {
           result(FlutterError(code: "share_failed", message: error.localizedDescription, details: nil))
         }
       }
+    case "dualCameraSupported":
+      result(CameraPipeline.dualSupported)
+    case "setDualCamera":
+      withPipeline(result) { pipeline in
+        pipeline.setDual(args["enabled"] as? Bool ?? false) { error in
+          DispatchQueue.main.async {
+            if let error {
+              result(FlutterError(code: "dual_failed", message: error.localizedDescription, details: nil))
+            } else {
+              result(nil)
+            }
+          }
+        }
+      }
+    case "setPictureInPicture":
+      withPipeline(result) { pipeline in
+        pipeline.setPictureInPicture(
+          CGRect(
+            x: args["x"] as? Double ?? 0, y: args["y"] as? Double ?? 0,
+            width: args["width"] as? Double ?? 0, height: args["height"] as? Double ?? 0))
+        result(nil)
+      }
     case "subtitlesSupported":
       result(true)
     case "transcribe":

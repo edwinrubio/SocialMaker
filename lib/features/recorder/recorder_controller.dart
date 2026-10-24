@@ -19,6 +19,7 @@ class RecorderController extends ChangeNotifier {
 
   static const resolutionKey = 'resolution';
   static const blurStrengthKey = 'blur-strength';
+  static const pipCornerKey = 'pip-corner';
 
   final BgCamera camera;
   final SettingsStore settings;
@@ -31,6 +32,11 @@ class RecorderController extends ChangeNotifier {
 
   /// 0 (subtle) to 1 (strong), for [BackgroundType.blur].
   double blurStrength = 0.5;
+
+  /// Both cameras at once: the other one in a window at [pipCorner].
+  bool dualSupported = false;
+  bool dualEnabled = false;
+  PipCorner pipCorner = PipCorner.bottomRight;
 
   VideoResolution resolution = VideoResolution.p1080;
   List<VideoResolution> supportedResolutions = const [];
@@ -78,8 +84,18 @@ class RecorderController extends ChangeNotifier {
         blurStrength =
             double.tryParse(await settings.read(blurStrengthKey) ?? '') ??
             blurStrength;
+        dualSupported = await camera.dualCameraSupported();
+        final corner = await settings.read(pipCornerKey);
+        pipCorner = PipCorner.values.firstWhere(
+          (c) => c.name == corner,
+          orElse: () => pipCorner,
+        );
       }
       preview = await camera.initialize(resolution: resolution);
+      if (dualEnabled) {
+        await camera.setPictureInPicture(pipRectFor(pipCorner));
+        await camera.setDualCamera(true);
+      }
       if (backgroundType != BackgroundType.none) {
         await camera.setBackground(
           backgroundType,
@@ -215,7 +231,33 @@ class RecorderController extends ChangeNotifier {
     if (done) await settings.write(blurStrengthKey, value.toString());
   }
 
+  /// Allowed while recording; in dual mode it swaps the two cameras.
   Future<void> switchCamera() => camera.switchCamera();
+
+  /// Turns recording with both cameras on or off (not while recording).
+  Future<void> toggleDual() async {
+    if (_recording || !dualSupported || preview == null) return;
+    final enable = !dualEnabled;
+    try {
+      if (enable) await camera.setPictureInPicture(pipRectFor(pipCorner));
+      await camera.setDualCamera(enable);
+      dualEnabled = enable;
+      error = null;
+    } on PlatformException catch (e) {
+      debugPrint('setDualCamera failed: ${e.message}');
+      error = 'No se pudieron usar las dos cámaras a la vez.';
+    }
+    notifyListeners();
+  }
+
+  /// Moves the second camera's window; also while recording.
+  Future<void> setPipCorner(PipCorner corner) async {
+    if (corner == pipCorner) return;
+    pipCorner = corner;
+    notifyListeners();
+    await camera.setPictureInPicture(pipRectFor(corner));
+    await settings.write(pipCornerKey, corner.name);
+  }
 
   /// Merges the remaining fragments, in order, and returns the video path.
   Future<String> export() =>

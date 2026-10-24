@@ -27,6 +27,10 @@ import kotlin.math.roundToInt
  * Owns the GL thread. The camera streams into an external texture; each new
  * frame is composited over the background with the latest person mask and drawn
  * into the Flutter preview surface and, while recording, the encoder surface.
+ *
+ * In dual mode a second camera streams into another texture (slot 1 is the
+ * front camera, slot 0 the back one) and is drawn as a picture-in-picture
+ * window over the main camera's frame.
  */
 class GlRenderer(
     private val context: Context,
@@ -55,15 +59,19 @@ class GlRenderer(
             .put(QUAD)
             .apply { position(0) }
 
+    private lateinit var streams: Array<CameraStream>
+    private var mainSlot = 0
+    private var dual = false
+
+    /** Picture-in-picture window: left, top, width, height as fractions of the frame. */
+    private val pipRect = floatArrayOf(0.58f, 0.42f, 0.28f, 0.28f)
+
+    // The main camera's texture and maps for the current frame.
     private var cameraTexture = 0
-    private var cameraSurfaceTexture: SurfaceTexture? = null
-    private var cameraBufferSize = Size(width, height)
-    private var cameraRotation = 0
-    private var cameraMirror = false
-    private val surfaceTextureMatrix = FloatArray(16)
     private val uprightMatrix = FloatArray(16)
     private val scratchMatrix = FloatArray(16)
     private val cameraMatrix = FloatArray(16)
+    private val pipMatrix = FloatArray(16)
 
     private var maskTexture = 0
     private val maskLock = Any()
@@ -93,7 +101,7 @@ class GlRenderer(
         runOnGl {
             egl = EglCore()
             programs = Programs()
-            cameraTexture = createTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES)
+            streams = Array(2) { CameraStream(createTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES)) }
             maskTexture = createTexture(GLES20.GL_TEXTURE_2D)
             prepareNextRecorder()
         }
@@ -106,30 +114,59 @@ class GlRenderer(
             previewSurface = surface?.takeIf { it.isValid }?.let { egl.createWindowSurface(it) }
         }
 
-    /** Hands CameraX a surface backed by the camera texture. Called for every (re)bind. */
+    /**
+     * Hands CameraX a surface backed by the texture of [slot] (0 = the only
+     * camera, or the back one in dual mode; 1 = front in dual mode). Called for
+     * every (re)bind.
+     */
     fun provideCameraSurface(
         request: SurfaceRequest,
         mirror: Boolean,
+        slot: Int = 0,
     ) = handler.post {
         if (released.get()) {
             request.willNotProvideSurface()
             return@post
         }
+        val stream = streams[slot]
         val surfaceTexture =
-            cameraSurfaceTexture ?: SurfaceTexture(cameraTexture).also {
-                it.setOnFrameAvailableListener({ onCameraFrame() }, handler)
-                cameraSurfaceTexture = it
+            stream.surfaceTexture ?: SurfaceTexture(stream.texture).also {
+                it.setOnFrameAvailableListener({ onCameraFrame(slot) }, handler)
+                stream.surfaceTexture = it
             }
         surfaceTexture.setDefaultBufferSize(request.resolution.width, request.resolution.height)
-        cameraBufferSize = request.resolution
-        cameraMirror = mirror
+        stream.bufferSize = request.resolution
+        stream.mirror = mirror
+        stream.hasFrame = false
         request.setTransformationInfoListener(glExecutor) { info ->
             // With a camera transform the SurfaceTexture matrix already rotates
             // the buffer upright; only rotate ourselves when it doesn't.
-            cameraRotation = if (info.hasCameraTransform()) 0 else info.rotationDegrees
+            stream.rotation = if (info.hasCameraTransform()) 0 else info.rotationDegrees
         }
         val surface = Surface(surfaceTexture)
         request.provideSurface(surface, glExecutor) { surface.release() }
+    }
+
+    /** [mainSlot] fills the frame; in [dual] mode the other slot is the window. */
+    fun setLayout(
+        dual: Boolean,
+        mainSlot: Int,
+    ) = handler.post {
+        this.dual = dual
+        this.mainSlot = mainSlot
+    }
+
+    /** Fractions of the frame, top-left origin. */
+    fun setPictureInPicture(
+        left: Float,
+        top: Float,
+        width: Float,
+        height: Float,
+    ) = handler.post {
+        pipRect[0] = left
+        pipRect[1] = top
+        pipRect[2] = width
+        pipRect[3] = height
     }
 
     /** Called on the analysis thread; the mask is copied, so the caller may reuse it. */
@@ -211,20 +248,24 @@ class GlRenderer(
             preparedRecorder?.let { prepared -> runCatching { prepared.get().cancel() } }
             prepareExecutor.shutdown()
             previewSurface?.let { egl.releaseSurface(it) }
-            cameraSurfaceTexture?.release()
+            streams.forEach { it.surfaceTexture?.release() }
             releaseBackground()
             egl.release()
         }
         thread.quitSafely()
     }
 
-    private fun onCameraFrame() {
+    private fun onCameraFrame(slot: Int) {
         if (released.get()) return
-        val surfaceTexture = cameraSurfaceTexture ?: return
+        val stream = streams[slot]
+        val surfaceTexture = stream.surfaceTexture ?: return
         try {
             egl.makePbufferCurrent()
             surfaceTexture.updateTexImage()
-            surfaceTexture.getTransformMatrix(surfaceTextureMatrix)
+            surfaceTexture.getTransformMatrix(stream.surfaceTextureMatrix)
+            stream.hasFrame = true
+            // The window's camera is drawn along with the main camera's next frame.
+            if (slot != mainSlot) return
             val start = System.nanoTime()
             draw(start)
             drawNanos += System.nanoTime() - start
@@ -236,19 +277,12 @@ class GlRenderer(
     }
 
     private fun draw(timestampNanos: Long) {
-        // Buffers are landscape; with the camera transform (rotation 0 here) the
-        // matrix turns them portrait, so the aspect follows the output's.
-        val sideways = cameraRotation % 180 != 0 || cameraBufferSize.width > cameraBufferSize.height
-        val cameraScale =
-            if (sideways) {
-                fillScale(cameraBufferSize.height, cameraBufferSize.width)
-            } else {
-                fillScale(cameraBufferSize.width, cameraBufferSize.height)
-            }
-        // Upright coords → sensor coords → SurfaceTexture coords (bottom-left origin).
-        uprightToSensor(cameraRotation, cameraMirror, uprightMatrix)
-        Matrix.multiplyMM(scratchMatrix, 0, surfaceTextureMatrix, 0, FLIP_Y, 0)
-        Matrix.multiplyMM(cameraMatrix, 0, scratchMatrix, 0, uprightMatrix, 0)
+        val main = streams[mainSlot]
+        cameraTexture = main.texture
+        val cameraScale = scaleAndMatrix(main, cameraMatrix)
+        val pip = streams[1 - mainSlot].takeIf { dual && it.hasFrame }
+        // The window has the frame's aspect ratio, so the same fill applies.
+        val pipScale = pip?.let { scaleAndMatrix(it, pipMatrix) }
 
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, cameraTexture)
@@ -257,6 +291,7 @@ class GlRenderer(
         previewSurface?.let { surface ->
             egl.makeCurrent(surface)
             drawQuad(program, cameraScale, previewWidth, previewHeight)
+            if (pip != null && pipScale != null) drawPip(pip, pipScale, previewWidth, previewHeight)
             // Finish on this thread so Flutter's consumer never waits on the
             // buffer's GPU fence on the platform thread (seconds on some GPUs).
             GLES20.glFinish()
@@ -267,6 +302,7 @@ class GlRenderer(
         if (recorder != null && recorderSurface != null) {
             egl.makeCurrent(recorderSurface)
             drawQuad(program, cameraScale, width, height)
+            if (pip != null && pipScale != null) drawPip(pip, pipScale, width, height)
             egl.setPresentationTime(recorderSurface, recorder.presentationNanos(timestampNanos))
             egl.swapBuffers(recorderSurface)
             recorder.onFrameRendered()
@@ -364,6 +400,44 @@ class GlRenderer(
         return a.texture
     }
 
+    /** Fills [matrix] (upright → texture coords) and returns the aspect-fill scale. */
+    private fun scaleAndMatrix(
+        stream: CameraStream,
+        matrix: FloatArray,
+    ): FloatArray {
+        // Buffers are landscape; with the camera transform (rotation 0 here) the
+        // matrix turns them portrait, so the aspect follows the output's.
+        val size = stream.bufferSize
+        val sideways = stream.rotation % 180 != 0 || size.width > size.height
+        val scale = if (sideways) fillScale(size.height, size.width) else fillScale(size.width, size.height)
+        // Upright coords → sensor coords → SurfaceTexture coords (bottom-left origin).
+        uprightToSensor(stream.rotation, stream.mirror, uprightMatrix)
+        Matrix.multiplyMM(scratchMatrix, 0, stream.surfaceTextureMatrix, 0, FLIP_Y, 0)
+        Matrix.multiplyMM(matrix, 0, scratchMatrix, 0, uprightMatrix, 0)
+        return scale
+    }
+
+    /** Draws the window's camera at [pipRect] (GL's origin is bottom-left). */
+    private fun drawPip(
+        stream: CameraStream,
+        scale: FloatArray,
+        viewportWidth: Int,
+        viewportHeight: Int,
+    ) {
+        val w = (pipRect[2] * viewportWidth).roundToInt()
+        val h = (pipRect[3] * viewportHeight).roundToInt()
+        val x = (pipRect[0] * viewportWidth).roundToInt()
+        val y = ((1 - pipRect[1] - pipRect[3]) * viewportHeight).roundToInt()
+        GLES20.glViewport(x, y, w, h)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, stream.texture)
+        programs.pip.pipSize = floatArrayOf(w.toFloat(), h.toFloat())
+        programs.pip.use(quad, scale, pipMatrix, IDENTITY)
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        // The next surface starts with the main camera again.
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, cameraTexture)
+    }
+
     private fun drawQuad(
         program: Programs.Program,
         cameraScale: FloatArray,
@@ -438,6 +512,18 @@ class GlRenderer(
         }
         done.await()
         error?.let { throw it }
+    }
+
+    /** One camera streaming into an external texture. GL thread only. */
+    private class CameraStream(
+        val texture: Int,
+    ) {
+        var surfaceTexture: SurfaceTexture? = null
+        var bufferSize = Size(1, 1)
+        var rotation = 0
+        var mirror = false
+        var hasFrame = false
+        val surfaceTextureMatrix = FloatArray(16)
     }
 
     /** Offscreen color texture + framebuffer. */

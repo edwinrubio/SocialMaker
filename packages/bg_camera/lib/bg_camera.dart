@@ -7,6 +7,29 @@ enum CameraLens { front, back }
 /// What is drawn behind the segmented person.
 enum BackgroundType { none, image, video, blur }
 
+/// Corner of the frame where the second camera's window sits in dual mode.
+enum PipCorner { topLeft, topRight, bottomLeft, bottomRight }
+
+/// The picture-in-picture window for [corner], as fractions of the recorded
+/// frame (top-left origin). The native renderer draws it there and the app's
+/// overlay uses the same rect, so both always agree. It has the frame's aspect
+/// ratio, which makes it square in these units.
+Rect pipRectFor(PipCorner corner) {
+  const size = 0.28;
+  // Kept clear of the sides the preview crops on tall screens, of the top
+  // bar, and of the bottom controls (and the apps' UI once shared).
+  const side = 0.14;
+  const top = 0.12;
+  const bottom = 0.30;
+  final left = corner == PipCorner.topLeft || corner == PipCorner.bottomLeft
+      ? side
+      : 1 - side - size;
+  final y = corner == PipCorner.topLeft || corner == PipCorner.topRight
+      ? top
+      : 1 - bottom - size;
+  return Rect.fromLTWH(left, y, size, size);
+}
+
 /// Result of [BgCamera.shareToApp].
 enum ShareOutcome {
   /// The app opened with the video loaded.
@@ -160,7 +183,23 @@ class BgCamera {
     });
   }
 
+  /// Works while recording; in dual mode it swaps the two cameras.
   Future<void> switchCamera() => _channel.invokeMethod<void>('switchCamera');
+
+  /// Whether both cameras can record at once on this device.
+  Future<bool> dualCameraSupported() async =>
+      await _channel.invokeMethod<bool>('dualCameraSupported') ?? false;
+
+  /// Records the other camera in a window at [setPictureInPicture]'s rect.
+  /// Not while recording.
+  Future<void> setDualCamera(bool enabled) =>
+      _channel.invokeMethod<void>('setDualCamera', {'enabled': enabled});
+
+  /// [rect] in fractions of the frame; see [pipRectFor].
+  Future<void> setPictureInPicture(Rect rect) => _channel.invokeMethod<void>(
+    'setPictureInPicture',
+    {'x': rect.left, 'y': rect.top, 'width': rect.width, 'height': rect.height},
+  );
 
   /// [fraction] goes from 0 (no zoom) to 1 (the camera's useful maximum).
   Future<void> setZoom(double fraction) => _channel.invokeMethod<void>(

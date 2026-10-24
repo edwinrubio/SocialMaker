@@ -6,6 +6,7 @@ import '../filters/filters_sheet.dart';
 import '../settings/settings_sheet.dart';
 import '../segments/segment_strip.dart';
 import '../segments/segment_viewer.dart';
+import 'pip_overlay.dart';
 import 'record_button.dart';
 import 'recorder_controller.dart';
 import 'segment_bar.dart';
@@ -99,6 +100,16 @@ class _RecorderScreenState extends State<RecorderScreen>
                   error: _controller.error,
                   onRetry: _controller.initialize,
                 ),
+              if (preview != null && _controller.dualEnabled)
+                PipOverlay(
+                  frameSize: Size(
+                    preview.width.toDouble(),
+                    preview.height.toDouble(),
+                  ),
+                  corner: _controller.pipCorner,
+                  onCorner: _controller.setPipCorner,
+                  onSwap: _controller.switchCamera,
+                ),
               SafeArea(child: _buildOverlay()),
             ],
           );
@@ -168,8 +179,10 @@ class _RecorderScreenState extends State<RecorderScreen>
               ),
               _ControlButton(
                 icon: Icons.cameraswitch_outlined,
-                tooltip: 'Cambiar cámara',
-                onPressed: idle && c.preview != null ? c.switchCamera : null,
+                tooltip: c.dualEnabled
+                    ? 'Intercambiar cámaras'
+                    : 'Cambiar cámara',
+                onPressed: c.preview != null ? c.switchCamera : null,
               ),
             ],
           ),
@@ -190,6 +203,15 @@ class _RecorderScreenState extends State<RecorderScreen>
                 tooltip: 'Configuración',
                 onPressed: idle && c.preview != null ? _openSettings : null,
               ),
+              if (c.dualSupported) ...[
+                const SizedBox(width: 8),
+                _PillButton(
+                  icon: Icons.picture_in_picture_alt_outlined,
+                  label: 'Dos cámaras',
+                  active: c.dualEnabled,
+                  onPressed: idle && c.preview != null ? c.toggleDual : null,
+                ),
+              ],
             ],
           ),
         ],

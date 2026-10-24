@@ -1,6 +1,7 @@
 package com.edwinrubio.bg_camera
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.CameraCharacteristics
@@ -11,9 +12,11 @@ import android.util.Log
 import android.util.Size
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ConcurrentCamera
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.UseCaseGroup
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
@@ -89,6 +92,9 @@ enum class OutputResolution(
  * The camera streams into [GlRenderer]'s GPU texture; a small analysis stream
  * feeds the person segmentation only while a background is active.
  *
+ * In dual mode both cameras run at once (CameraX concurrent cameras, only on
+ * devices that support it); [front] then says which one fills the frame.
+ *
  * Public methods are called on the main thread.
  */
 class CameraPipeline(
@@ -107,6 +113,8 @@ class CameraPipeline(
     private var cameraProvider: ProcessCameraProvider? = null
     private var camera: Camera? = null
     private var front = true
+    private var dual = false
+    private var dualCameras: Map<Boolean, Camera> = emptyMap()
 
     @Volatile private var segmentationEnabled = false
     private var segmenter: PersonSegmenter? = null
@@ -141,10 +149,42 @@ class CameraPipeline(
         }, ContextCompat.getMainExecutor(context))
     }
 
+    /** Works while recording; in dual mode it swaps the two cameras. */
     fun switchCamera() {
         front = !front
-        bindCamera()
+        if (dual) {
+            camera = dualCameras[front]
+            renderer.setLayout(true, slotOf(front))
+        } else {
+            bindCamera()
+        }
     }
+
+    /** Binds one or both cameras; on failure goes back to one and reports it. Not while recording. */
+    fun setDual(
+        enabled: Boolean,
+        callback: (Exception?) -> Unit,
+    ) {
+        if (enabled == dual) return callback(null)
+        dual = enabled
+        try {
+            bindCamera()
+            callback(null)
+        } catch (e: Exception) {
+            Log.w(TAG, "Dual camera failed", e)
+            dual = false
+            bindCamera()
+            callback(e)
+        }
+    }
+
+    /** Fractions of the frame, top-left origin. */
+    fun setPictureInPicture(
+        left: Float,
+        top: Float,
+        width: Float,
+        height: Float,
+    ) = renderer.setPictureInPicture(left, top, width, height)
 
     /** [fraction] 0..1 across the camera's zoom range. */
     fun setZoom(fraction: Float) {
@@ -174,6 +214,9 @@ class CameraPipeline(
 
     private fun bindCamera() {
         val provider = cameraProvider ?: return
+        if (dual) return bindBothCameras(provider)
+        dualCameras = emptyMap()
+        renderer.setLayout(false, 0)
         val preview =
             Preview
                 .Builder()
@@ -208,19 +251,101 @@ class CameraPipeline(
                 ).setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
-        analysis.setAnalyzer(analysisExecutor, ::analyze)
+        analysis.setAnalyzer(analysisExecutor) { analyze(it, mirror) }
 
         val selector = if (front) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
         provider.unbindAll()
         camera = provider.bindToLifecycle(this, selector, preview, analysis)
     }
 
-    private fun analyze(image: ImageProxy) =
-        image.use {
+    /**
+     * Back camera into slot 0, front into slot 1. Segmentation streams are
+     * added when the device allows them with two cameras; otherwise only the
+     * previews run (and backgrounds don't apply).
+     */
+    private fun bindBothCameras(provider: ProcessCameraProvider) {
+        val pair =
+            provider.availableConcurrentCameraInfos.firstOrNull { infos ->
+                infos.any { it.lensFacing == CameraSelector.LENS_FACING_FRONT } &&
+                    infos.any { it.lensFacing == CameraSelector.LENS_FACING_BACK }
+            } ?: throw IllegalStateException(
+                "No front + back concurrent cameras in " +
+                    provider.availableConcurrentCameraInfos.map { infos -> infos.map { it.lensFacing } },
+            )
+
+        fun config(
+            lensFront: Boolean,
+            withAnalysis: Boolean,
+        ): ConcurrentCamera.SingleCameraConfig {
+            val facing = if (lensFront) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
+            val selector = pair.first { it.lensFacing == facing }.cameraSelector
+            val preview =
+                Preview
+                    .Builder()
+                    .setResolutionSelector(
+                        ResolutionSelector
+                            .Builder()
+                            .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                            .setResolutionStrategy(
+                                ResolutionStrategy(
+                                    DUAL_PREVIEW_SIZE,
+                                    ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER,
+                                ),
+                            ).build(),
+                    ).build()
+            preview.setSurfaceProvider(ContextCompat.getMainExecutor(context)) { request ->
+                renderer.provideCameraSurface(request, lensFront, slotOf(lensFront))
+            }
+            val group = UseCaseGroup.Builder().addUseCase(preview)
+            if (withAnalysis) {
+                val analysis =
+                    ImageAnalysis
+                        .Builder()
+                        .setResolutionSelector(
+                            ResolutionSelector
+                                .Builder()
+                                .setResolutionStrategy(
+                                    ResolutionStrategy(
+                                        ANALYSIS_SIZE,
+                                        ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                                    ),
+                                ).build(),
+                        ).setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .build()
+                // Only the camera that fills the frame is segmented.
+                analysis.setAnalyzer(analysisExecutor) { image ->
+                    if (lensFront == front) analyze(image, lensFront) else image.close()
+                }
+                group.addUseCase(analysis)
+            }
+            return ConcurrentCamera.SingleCameraConfig(selector, group.build(), this)
+        }
+
+        renderer.setLayout(true, slotOf(front))
+        val bound =
+            listOf(true, false).firstNotNullOfOrNull { withAnalysis ->
+                provider.unbindAll()
+                try {
+                    provider.bindToLifecycle(listOf(config(false, withAnalysis), config(true, withAnalysis)))
+                } catch (e: Exception) {
+                    Log.w(TAG, "Concurrent cameras (analysis=$withAnalysis) failed", e)
+                    null
+                }
+            } ?: throw IllegalStateException("Cannot bind both cameras")
+        // Same order as the configs: back, then front.
+        dualCameras = mapOf(false to bound.cameras[0], true to bound.cameras[1])
+        camera = dualCameras[front]
+    }
+
+    private fun analyze(
+        image: ImageProxy,
+        mirror: Boolean,
+    ) = image.use {
             if (!segmentationEnabled) return@use
             try {
                 val bitmap = copyToBitmap(it)
-                val mask = segment(bitmap, it.imageInfo.rotationDegrees, front) ?: return@use
+                val mask = segment(bitmap, it.imageInfo.rotationDegrees, mirror) ?: return@use
                 renderer.submitMask(mask)
             } catch (e: Exception) {
                 Log.w(TAG, "Analysis failed", e)
@@ -261,10 +386,32 @@ class CameraPipeline(
         return segmenter.segment(frame, rotationDegrees, mirror)
     }
 
-    private companion object {
-        const val TAG = "bg_camera"
+    companion object {
+        private const val TAG = "bg_camera"
 
         // The model works at 256 px; a small stream keeps segmentation cheap.
-        val ANALYSIS_SIZE = Size(640, 480)
+        private val ANALYSIS_SIZE = Size(640, 480)
+
+        // Concurrent cameras are limited to about 1080p per stream.
+        private val DUAL_PREVIEW_SIZE = Size(1920, 1080)
+
+        private fun slotOf(front: Boolean) = if (front) 1 else 0
+
+        /**
+         * Whether the device can stream a front and a back camera at once. The
+         * system feature alone isn't enough (the emulator declares it without
+         * any usable pair), so the camera service is asked for one.
+         */
+        fun dualSupported(context: Context): Boolean {
+            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.R) return false
+            if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_CONCURRENT)) return false
+            val manager = context.getSystemService(CameraManager::class.java) ?: return false
+            return runCatching {
+                manager.concurrentCameraIds.any { ids ->
+                    val facings = ids.map { manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) }
+                    CameraCharacteristics.LENS_FACING_FRONT in facings && CameraCharacteristics.LENS_FACING_BACK in facings
+                }
+            }.getOrDefault(false)
+        }
     }
 }

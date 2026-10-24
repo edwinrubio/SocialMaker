@@ -70,6 +70,25 @@ class BgCameraPlugin :
                     call.argument<Double>("blurStrength") ?: 0.5,
                     result,
                 )
+            "dualCameraSupported" -> result.success(CameraPipeline.dualSupported(context))
+            "setDualCamera" -> withPipeline(result) { pipeline ->
+                pipeline.setDual(call.argument<Boolean>("enabled") ?: false) { error ->
+                    if (error == null) {
+                        result.success(null)
+                    } else {
+                        result.error("dual_failed", error.message, null)
+                    }
+                }
+            }
+            "setPictureInPicture" -> withPipeline(result) { pipeline ->
+                pipeline.setPictureInPicture(
+                    (call.argument<Double>("x") ?: 0.0).toFloat(),
+                    (call.argument<Double>("y") ?: 0.0).toFloat(),
+                    (call.argument<Double>("width") ?: 0.0).toFloat(),
+                    (call.argument<Double>("height") ?: 0.0).toFloat(),
+                )
+                result.success(null)
+            }
             "switchCamera" -> withPipeline(result) {
                 it.switchCamera()
                 result.success(null)
