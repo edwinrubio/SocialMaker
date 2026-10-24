@@ -39,6 +39,9 @@ class RecorderController extends ChangeNotifier {
   bool dualSupported = false;
   bool dualEnabled = false;
 
+  /// While the camera restarts for [toggleDual] (about a second).
+  bool switchingDual = false;
+
   /// Sizes the device can record with both cameras (4K only on some).
   List<VideoResolution> dualResolutions = const [];
   Offset pipOrigin = defaultPipOrigin;
@@ -283,7 +286,7 @@ class RecorderController extends ChangeNotifier {
 
   /// Turns recording with both cameras on or off (not while recording).
   Future<void> toggleDual() async {
-    if (_recording || preview == null) return;
+    if (_recording || preview == null || switchingDual) return;
     if (!dualSupported) {
       error = 'Este teléfono no permite usar las dos cámaras a la vez.';
       notifyListeners();
@@ -297,6 +300,8 @@ class RecorderController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    switchingDual = true;
+    notifyListeners();
     try {
       if (enable) await camera.setPictureInPicture(pipRectAt(pipOrigin));
       await camera.setDualCamera(enable);
@@ -305,6 +310,8 @@ class RecorderController extends ChangeNotifier {
     } on PlatformException catch (e) {
       debugPrint('setDualCamera failed: ${e.message}');
       error = 'No se pudieron usar las dos cámaras a la vez.';
+    } finally {
+      switchingDual = false;
     }
     notifyListeners();
   }

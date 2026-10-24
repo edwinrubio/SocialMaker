@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:bg_camera/bg_camera.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -136,8 +138,14 @@ class FakeBgCamera implements BgCamera {
   Future<List<VideoResolution>> dualCameraResolutions() async =>
       dualSupported ? dualResolutions : const [];
 
+  /// Completes [setDualCamera] when set; null answers at once.
+  Completer<void>? dualSwitch;
+
   @override
-  Future<void> setDualCamera(bool enabled) async => dualCalls.add(enabled);
+  Future<void> setDualCamera(bool enabled) async {
+    dualCalls.add(enabled);
+    await dualSwitch?.future;
+  }
 
   @override
   Future<void> setPictureInPicture(Rect rect) async => pipRects.add(rect);
@@ -327,6 +335,20 @@ void main() {
     await controller.startSegment();
     await controller.toggleDual();
     expect(controller.dualEnabled, isTrue, reason: 'locked while recording');
+  });
+
+  test('a second tap while dual mode switches is ignored', () async {
+    camera.dualSwitch = Completer<void>();
+    final first = controller.toggleDual();
+    expect(controller.switchingDual, isTrue);
+
+    await controller.toggleDual();
+    camera.dualSwitch!.complete();
+    await first;
+
+    expect(camera.dualCalls, [true]);
+    expect(controller.dualEnabled, isTrue);
+    expect(controller.switchingDual, isFalse);
   });
 
   test('dual camera at 4K only where both cameras offer it', () async {

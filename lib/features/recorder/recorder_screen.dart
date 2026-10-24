@@ -271,7 +271,10 @@ class _RecorderScreenState extends State<RecorderScreen>
                   label: '2 cámaras',
                   tooltip: 'Grabar con las dos cámaras',
                   active: c.dualEnabled,
-                  onPressed: idle && c.preview != null ? c.toggleDual : null,
+                  busy: c.switchingDual,
+                  onPressed: idle && c.preview != null && !c.switchingDual
+                      ? c.toggleDual
+                      : null,
                 ),
               ],
             ),
@@ -342,12 +345,16 @@ class _PillButton extends StatelessWidget {
     required this.label,
     required this.onPressed,
     this.active = false,
+    this.busy = false,
     this.tooltip,
   });
 
   final IconData icon;
   final String label;
   final bool active;
+
+  /// Shows a spinner in place of the icon while the change takes effect.
+  final bool busy;
   final String? tooltip;
   final VoidCallback? onPressed;
 
@@ -364,12 +371,26 @@ class _PillButton extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 20, color: active ? Brand.pink : Colors.white),
+              if (busy)
+                const SizedBox.square(
+                  dimension: 20,
+                  child: Padding(
+                    padding: EdgeInsets.all(2),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Brand.pink,
+                    ),
+                  ),
+                )
+              else
+                Icon(icon, size: 20, color: active ? Brand.pink : Colors.white),
               const SizedBox(width: 8),
               Text(
                 label,
                 style: TextStyle(
-                  color: onPressed == null ? Colors.white38 : Colors.white,
+                  color: onPressed == null && !busy
+                      ? Colors.white38
+                      : Colors.white,
                 ),
               ),
             ],

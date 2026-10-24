@@ -138,17 +138,12 @@ final class CameraPipeline: NSObject, FlutterTexture,
     request.outputPixelFormat = kCVPixelFormatType_OneComponent8
     return request
   }()
-  /// Segments the picture-in-picture window: `.fast` is plenty at its size.
-  private let windowSegmentation: VNGeneratePersonSegmentationRequest = {
-    let request = VNGeneratePersonSegmentationRequest()
-    request.qualityLevel = .fast
-    request.outputPixelFormat = kCVPixelFormatType_OneComponent8
-    return request
-  }()
-  /// The window's camera usually delivers fewer frames than the main one
-  /// composites: its mask is computed once per window frame, not per output
-  /// frame (doing it per output frame starved the window's camera).
-  private var windowMask: (source: CVPixelBuffer, mask: CVPixelBuffer)?
+  /// Dual mode segments both cameras off `queue`: waiting for Vision on
+  /// every frame, with both cameras and the encoder running, stalled the
+  /// picture and starved the window's camera. Frames use the latest mask.
+  private let mainMasks = LatestMask(quality: .balanced, label: "bg_camera.segmentation.main")
+  /// `.fast` is plenty at the window's size.
+  private let windowMasks = LatestMask(quality: .fast, label: "bg_camera.segmentation.window")
   private var bufferPool: CVPixelBufferPool?
 
   private let latestLock = NSLock()
@@ -275,7 +270,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
       if self.dual {
         self.position = next
         self.latestPip = nil  // Until the other camera's next frame.
-        self.windowMask = nil
+        self.resetMasks()
         return
       }
       self.session.beginConfiguration()
@@ -313,7 +308,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
         if self.simulatorFeed != nil {
           self.dual = enabled
           self.latestPip = nil
-          self.windowMask = nil
+          self.resetMasks()
           return completion(nil)
         }
       #endif
@@ -345,7 +340,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
         self.dual = false
       }
       self.latestPip = nil
-      self.windowMask = nil
+      self.resetMasks()
       self.session.startRunning()
       completion(failure)
     }
@@ -408,6 +403,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
   }
 
   /// Composites one camera frame, shows it and records it. Runs on `queue`.
+
   private func process(_ cameraBuffer: CVPixelBuffer, at time: CMTime) {
     guard let frame = composite(cameraBuffer) else { return }
 
@@ -643,14 +639,18 @@ final class CameraPipeline: NSObject, FlutterTexture,
 
   /// Vision's person mask for [cameraBuffer].
   private func personMask(for cameraBuffer: CVPixelBuffer, isWindow: Bool) -> CVPixelBuffer? {
-    if isWindow, let windowMask, windowMask.source === cameraBuffer { return windowMask.mask }
-    let request = isWindow ? windowSegmentation : segmentation
+    if dual { return (isWindow ? windowMasks : mainMasks).mask(for: cameraBuffer, on: queue) }
     // A fresh handler per frame: VNSequenceRequestHandler smooths the mask
     // over time, which leaves a ghost of the previous pose when moving.
-    try? VNImageRequestHandler(cvPixelBuffer: cameraBuffer).perform([request])
-    let mask = request.results?.first?.pixelBuffer
-    if isWindow { windowMask = mask.map { (cameraBuffer, $0) } }
-    return mask
+    try? VNImageRequestHandler(cvPixelBuffer: cameraBuffer).perform([segmentation])
+    return segmentation.results?.first?.pixelBuffer
+  }
+
+  /// After the cameras swap or dual mode changes: drop masks of the old
+  /// layout, including ones still being computed.
+  private func resetMasks() {
+    mainMasks.reset()
+    windowMasks.reset()
   }
 
   #if targetEnvironment(simulator)
@@ -738,3 +738,45 @@ extension CIImage {
     return scaled.transformed(by: CGAffineTransform(translationX: dx, y: dy)).cropped(to: rect)
   }
 }
+
+/// Person segmentation run on its own queue, one frame at a time: callers
+/// get the latest finished mask without waiting. Its state lives on the
+/// caller's queue.
+private final class LatestMask {
+  private let request = VNGeneratePersonSegmentationRequest()
+  private let segmentationQueue: DispatchQueue
+  private var segmenting = false
+  private var latest: CVPixelBuffer?
+  /// Bumped by `reset`, so a mask still in flight is dropped.
+  private var generation = 0
+
+  init(quality: VNGeneratePersonSegmentationRequest.QualityLevel, label: String) {
+    request.qualityLevel = quality
+    request.outputPixelFormat = kCVPixelFormatType_OneComponent8
+    segmentationQueue = DispatchQueue(label: label)
+  }
+
+  /// Starts segmenting [buffer] unless a frame is already being segmented,
+  /// and returns the latest finished mask. Always called on [queue].
+  func mask(for buffer: CVPixelBuffer, on queue: DispatchQueue) -> CVPixelBuffer? {
+    if !segmenting {
+      segmenting = true
+      let started = generation
+      segmentationQueue.async { [request] in
+        try? VNImageRequestHandler(cvPixelBuffer: buffer).perform([request])
+        let mask = request.results?.first?.pixelBuffer
+        queue.async {
+          self.segmenting = false
+          if started == self.generation { self.latest = mask }
+        }
+      }
+    }
+    return latest
+  }
+
+  func reset() {
+    latest = nil
+    generation += 1
+  }
+}
+

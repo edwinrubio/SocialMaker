@@ -18,6 +18,7 @@ final class SegmentWriter {
   private let adaptor: AVAssetWriterInputPixelBufferAdaptor
   private let startTime: CMTime
   private var lastVideoTime: CMTime
+  private var wroteVideo = false
   /// Where the written audio ends; a later sample means audio was lost.
   private var audioEnd: CMTime?
 
@@ -61,7 +62,16 @@ final class SegmentWriter {
     lock.lock()
     defer { lock.unlock() }
     guard writer.status == .writing, videoInput.isReadyForMoreMediaData else { return }
-    if adaptor.append(buffer, withPresentationTime: time) { lastVideoTime = time }
+    // Timestamps must increase: after the cameras swap, the other camera's
+    // first frame can be no later than the last one written, and appending
+    // it fails the whole fragment.
+    guard !wroteVideo || time > lastVideoTime else { return }
+    if adaptor.append(buffer, withPresentationTime: time) {
+      lastVideoTime = time
+      wroteVideo = true
+    } else {
+      NSLog("bg_camera: video frame rejected: \(String(describing: writer.error))")
+    }
   }
 
   func appendAudio(_ sample: CMSampleBuffer) {
