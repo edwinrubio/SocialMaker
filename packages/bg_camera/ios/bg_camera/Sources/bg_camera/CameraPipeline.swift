@@ -85,6 +85,14 @@ final class CameraPipeline: NSObject, FlutterTexture,
   let frameRate: Int
   var outputWidth: Int { resolution.width }
   var outputHeight: Int { resolution.height }
+  /// Size frames are composited at. Two cameras deliver 1080p at most, and
+  /// compositing them (blur included) at 4K was too much work to keep up:
+  /// dual mode composites at 1080p and the encoder scales up to the output.
+  private var renderSize: CGSize {
+    dual && resolution == .p2160
+      ? CGSize(width: OutputResolution.p1080.width, height: OutputResolution.p1080.height)
+      : CGSize(width: outputWidth, height: outputHeight)
+  }
 
   private(set) var textureId: Int64 = 0
 
@@ -126,7 +134,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
   /// composites: its mask is computed once per window frame, not per output
   /// frame (doing it per output frame starved the window's camera).
   private var windowMask: (source: CVPixelBuffer, mask: CVPixelBuffer)?
-  private var bufferPool: CVPixelBufferPool?
+  private var bufferPool: (size: CGSize, pool: CVPixelBufferPool)?
 
   private let latestLock = NSLock()
   private var latestBuffer: CVPixelBuffer?
@@ -565,7 +573,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
   /// Renders the camera frame (with the background replaced, if any) into an
   /// output-sized buffer.
   private func composite(_ cameraBuffer: CVPixelBuffer) -> CVPixelBuffer? {
-    let extent = CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight)
+    let extent = CGRect(origin: .zero, size: renderSize)
     // In dual mode the background effect follows the front camera, the one
     // filming the person, whether it fills the frame or the small window.
     let mainHasBackground = !dual || position == .front
@@ -579,7 +587,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
       image = Self.addingPictureInPicture(window, to: image, at: frame)
     }
 
-    guard let output = makeOutputBuffer() else { return nil }
+    guard let output = makeOutputBuffer(size: extent.size) else { return nil }
     ciContext.render(image.cropped(to: extent), to: output)
     return output
   }
@@ -678,18 +686,20 @@ final class CameraPipeline: NSObject, FlutterTexture,
       .cropped(to: mask.extent)
   }
 
-  private func makeOutputBuffer() -> CVPixelBuffer? {
-    if bufferPool == nil {
+  private func makeOutputBuffer(size: CGSize) -> CVPixelBuffer? {
+    if bufferPool?.size != size {
       let attributes: [String: Any] = [
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-        kCVPixelBufferWidthKey as String: outputWidth,
-        kCVPixelBufferHeightKey as String: outputHeight,
+        kCVPixelBufferWidthKey as String: Int(size.width),
+        kCVPixelBufferHeightKey as String: Int(size.height),
         kCVPixelBufferIOSurfacePropertiesKey as String: [:],
         kCVPixelBufferMetalCompatibilityKey as String: true,
       ]
-      CVPixelBufferPoolCreate(nil, nil, attributes as CFDictionary, &bufferPool)
+      var pool: CVPixelBufferPool?
+      CVPixelBufferPoolCreate(nil, nil, attributes as CFDictionary, &pool)
+      bufferPool = pool.map { (size, $0) }
     }
-    guard let pool = bufferPool else { return nil }
+    guard let pool = bufferPool?.pool else { return nil }
     var buffer: CVPixelBuffer?
     CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer)
     return buffer

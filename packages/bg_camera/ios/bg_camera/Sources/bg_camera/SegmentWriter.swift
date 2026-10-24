@@ -32,6 +32,8 @@ final class SegmentWriter {
         AVVideoCodecKey: AVVideoCodecType.h264,
         AVVideoWidthKey: width,
         AVVideoHeightKey: height,
+        // Frames composited smaller (dual mode at 4K) are scaled up.
+        AVVideoScalingModeKey: AVVideoScalingModeResizeAspectFill,
         AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: bitRate],
       ])
     videoInput.expectsMediaDataInRealTime = true
