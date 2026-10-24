@@ -85,6 +85,7 @@ class BgCameraPlugin :
                     result,
                 )
             "dualCameraSupported" -> result.success(CameraPipeline.dualSupported(context))
+            "dualCameraResolutions" -> result.success(OutputResolution.dualSupported(context).map { it.name })
             "setDualCamera" -> withPipeline(result) { pipeline ->
                 pipeline.setDual(call.argument<Boolean>("enabled") ?: false) { error ->
                     if (error == null) {

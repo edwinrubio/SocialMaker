@@ -103,6 +103,8 @@ class _RecorderScreenState extends State<RecorderScreen>
       supportedResolutions: c.supportedResolutions,
       frameRatesFor: c.frameRatesFor,
       fragmentCount: c.segments.length,
+      dualEnabled: c.dualEnabled,
+      dualResolutions: c.dualResolutions,
     );
     if (choice == null) return;
     if (choice.resolution != c.resolution) {

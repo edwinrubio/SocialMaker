@@ -26,6 +26,8 @@ void main() {
               return '/tmp/out.mp4';
             case 'supportedResolutions':
               return ['p720', 'p1080'];
+            case 'dualCameraResolutions':
+              return ['p1080', 'unknown', 'p720'];
             case 'transcribe':
               return [
                 {'startMs': 0, 'endMs': 1200, 'text': 'Hola a todos'},
@@ -88,6 +90,13 @@ void main() {
 
   test('supportedResolutions keeps known values in order', () async {
     expect(await BgCamera().supportedResolutions(), [
+      VideoResolution.p720,
+      VideoResolution.p1080,
+    ]);
+  });
+
+  test('dualCameraResolutions keeps known values in order', () async {
+    expect(await BgCamera().dualCameraResolutions(), [
       VideoResolution.p720,
       VideoResolution.p1080,
     ]);

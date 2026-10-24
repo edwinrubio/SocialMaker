@@ -38,6 +38,9 @@ class RecorderController extends ChangeNotifier {
   /// (top-left corner, fractions of the frame).
   bool dualSupported = false;
   bool dualEnabled = false;
+
+  /// Sizes the device can record with both cameras (4K only on some).
+  List<VideoResolution> dualResolutions = const [];
   Offset pipOrigin = defaultPipOrigin;
 
   VideoResolution resolution = VideoResolution.p1080;
@@ -99,6 +102,7 @@ class RecorderController extends ChangeNotifier {
             double.tryParse(await settings.read(blurStrengthKey) ?? '') ??
             blurStrength;
         dualSupported = await camera.dualCameraSupported();
+        dualResolutions = await camera.dualCameraResolutions();
         final saved = (await settings.read(pipOriginKey))?.split(',');
         final x = double.tryParse(saved?.first ?? '');
         final y = double.tryParse(saved?.last ?? '');
@@ -209,6 +213,7 @@ class RecorderController extends ChangeNotifier {
   /// existing ones are deleted; ask the user before calling this.
   Future<void> changeResolution(VideoResolution value) async {
     if (value == resolution || _recording) return;
+    if (dualEnabled && !dualResolutions.contains(value)) return;
     resolution = value;
     await settings.write(resolutionKey, value.name);
     if (!frameRatesFor(value).contains(frameRate)) {
@@ -285,6 +290,13 @@ class RecorderController extends ChangeNotifier {
       return;
     }
     final enable = !dualEnabled;
+    if (enable && !dualResolutions.contains(resolution)) {
+      error =
+          'Este teléfono no permite grabar en ${resolution.label} con las dos '
+          'cámaras. Baja la resolución en Configuración.';
+      notifyListeners();
+      return;
+    }
     try {
       if (enable) await camera.setPictureInPicture(pipRectAt(pipOrigin));
       await camera.setDualCamera(enable);

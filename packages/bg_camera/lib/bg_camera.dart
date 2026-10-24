@@ -238,6 +238,18 @@ class BgCamera {
   Future<bool> dualCameraSupported() async =>
       await _channel.invokeMethod<bool>('dualCameraSupported') ?? false;
 
+  /// Sizes both cameras can record at once (empty without dual mode); 4K
+  /// only on devices whose front and back cameras both offer it together.
+  Future<List<VideoResolution>> dualCameraResolutions() async {
+    final names =
+        await _channel.invokeListMethod<String>('dualCameraResolutions') ??
+        const <String>[];
+    return [
+      for (final resolution in VideoResolution.values)
+        if (names.contains(resolution.name)) resolution,
+    ];
+  }
+
   /// Records the other camera in a window at [setPictureInPicture]'s rect.
   /// Not while recording.
   Future<void> setDualCamera(bool enabled) =>

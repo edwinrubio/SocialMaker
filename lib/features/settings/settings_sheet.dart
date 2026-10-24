@@ -15,6 +15,8 @@ Future<VideoSettings?> showSettingsSheet(
   required List<VideoResolution> supportedResolutions,
   required List<VideoFrameRate> Function(VideoResolution) frameRatesFor,
   required int fragmentCount,
+  bool dualEnabled = false,
+  List<VideoResolution> dualResolutions = const [],
 }) {
   return showModalBottomSheet<VideoSettings>(
     context: context,
@@ -25,6 +27,8 @@ Future<VideoSettings?> showSettingsSheet(
       supportedResolutions: supportedResolutions,
       frameRatesFor: frameRatesFor,
       fragmentCount: fragmentCount,
+      dualEnabled: dualEnabled,
+      dualResolutions: dualResolutions,
     ),
   );
 }
@@ -35,12 +39,23 @@ class _SettingsSheet extends StatelessWidget {
     required this.supportedResolutions,
     required this.frameRatesFor,
     required this.fragmentCount,
+    required this.dualEnabled,
+    required this.dualResolutions,
   });
 
   final VideoSettings current;
   final List<VideoResolution> supportedResolutions;
   final List<VideoFrameRate> Function(VideoResolution) frameRatesFor;
   final int fragmentCount;
+  final bool dualEnabled;
+
+  /// What the device records with both cameras; only these while
+  /// [dualEnabled].
+  final List<VideoResolution> dualResolutions;
+
+  bool _available(VideoResolution value) =>
+      supportedResolutions.contains(value) &&
+      (!dualEnabled || dualResolutions.contains(value));
 
   Future<void> _choose(BuildContext context, VideoSettings value) async {
     if (value == current) {
@@ -97,7 +112,7 @@ class _SettingsSheet extends StatelessWidget {
                   ChoiceChip(
                     label: Text(resolution.label),
                     selected: resolution == current.resolution,
-                    onSelected: supportedResolutions.contains(resolution)
+                    onSelected: _available(resolution)
                         ? (_) => _choose(context, (
                             resolution: resolution,
                             frameRate: current.frameRate,
@@ -108,9 +123,11 @@ class _SettingsSheet extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              supportedResolutions.contains(VideoResolution.p2160)
-                  ? 'Más resolución = más calidad y archivos más grandes.'
-                  : 'Este teléfono no puede grabar en 4K con efectos.',
+              !supportedResolutions.contains(VideoResolution.p2160)
+                  ? 'Este teléfono no puede grabar en 4K con efectos.'
+                  : !_available(VideoResolution.p2160)
+                  ? 'Este teléfono no graba en 4K con las dos cámaras.'
+                  : 'Más resolución = más calidad y archivos más grandes.',
               style: hint,
             ),
             const SizedBox(height: 20),

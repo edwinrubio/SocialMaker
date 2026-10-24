@@ -164,6 +164,9 @@ La primera vez iOS puede descargar el modelo del idioma, y para eso necesita con
 **Con "2 cámaras" el video no sale a 60 fps.**
 El modo de dos cámaras graba a 30 fps; es el máximo que ofrecen los teléfonos con ambas cámaras activas.
 
+**Con "2 cámaras" no me deja grabar en 4K.**
+Solo se permite 4K con dos cámaras si la trasera y la frontal pueden grabar en 4K a la vez; la mayoría de los teléfonos llegan a 1080p. Si el tuyo no puede, la app lo avisa: baja la resolución a 1080p en Configuración. En Android, el modo de dos cámaras llega como máximo a 1080p.
+
 ---
 
 ## Para desarrolladores

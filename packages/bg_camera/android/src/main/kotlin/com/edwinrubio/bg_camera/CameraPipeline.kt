@@ -73,6 +73,13 @@ enum class OutputResolution(
             return supported.ifEmpty { listOf(p720) }
         }
 
+        /**
+         * Sizes for dual mode: concurrent camera streams are only guaranteed
+         * up to 1440p, so 4K is never offered with two cameras.
+         */
+        fun dualSupported(context: Context): List<OutputResolution> =
+            if (CameraPipeline.dualSupported(context)) supported(context).filter { it.height <= p1080.height } else emptyList()
+
         /** Frame rates (24, 30, 60) both the front camera and an H.264 encoder offer at [resolution]. */
         fun supportedFrameRates(
             context: Context,

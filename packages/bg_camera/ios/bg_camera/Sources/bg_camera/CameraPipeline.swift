@@ -48,6 +48,24 @@ enum OutputResolution: String, CaseIterable {
     return supported.isEmpty ? [.p720] : supported
   }
 
+  /// Sizes both cameras can capture at once (dual mode): the multi-camera
+  /// formats of back and front must both cover them.
+  static func dualSupported() -> [OutputResolution] {
+    #if targetEnvironment(simulator)
+      return CameraPipeline.dualSupported ? [.p720, .p1080] : []
+    #else
+      guard AVCaptureMultiCamSession.isMultiCamSupported else { return [] }
+      let cameras = [AVCaptureDevice.Position.back, .front].map {
+        AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: $0)
+      }
+      return allCases.filter { resolution in
+        cameras.allSatisfy { camera in
+          camera?.formats.contains { $0.isMultiCamSupported && resolution.covers($0) } ?? false
+        }
+      }
+    #endif
+  }
+
   /// Frame rates (24, 30, 60) the front camera offers at this size.
   func supportedFrameRates() -> [Int] {
     guard
@@ -61,11 +79,16 @@ enum OutputResolution: String, CaseIterable {
 
   /// Whether [format] covers this size (landscape) at [frameRate].
   func fits(_ format: AVCaptureDevice.Format, frameRate: Int) -> Bool {
-    let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-    return Int(size.width) >= height && Int(size.height) >= width
+    covers(format)
       && format.videoSupportedFrameRateRanges.contains {
         $0.minFrameRate <= Double(frameRate) && Double(frameRate) <= $0.maxFrameRate
       }
+  }
+
+  /// Whether [format] (landscape) is at least this size.
+  func covers(_ format: AVCaptureDevice.Format) -> Bool {
+    let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+    return Int(size.width) >= height && Int(size.height) >= width
   }
 }
 
@@ -85,14 +108,6 @@ final class CameraPipeline: NSObject, FlutterTexture,
   let frameRate: Int
   var outputWidth: Int { resolution.width }
   var outputHeight: Int { resolution.height }
-  /// Size frames are composited at. Two cameras deliver 1080p at most, and
-  /// compositing them (blur included) at 4K was too much work to keep up:
-  /// dual mode composites at 1080p and the encoder scales up to the output.
-  private var renderSize: CGSize {
-    dual && resolution == .p2160
-      ? CGSize(width: OutputResolution.p1080.width, height: OutputResolution.p1080.height)
-      : CGSize(width: outputWidth, height: outputHeight)
-  }
 
   private(set) var textureId: Int64 = 0
 
@@ -134,7 +149,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
   /// composites: its mask is computed once per window frame, not per output
   /// frame (doing it per output frame starved the window's camera).
   private var windowMask: (source: CVPixelBuffer, mask: CVPixelBuffer)?
-  private var bufferPool: (size: CGSize, pool: CVPixelBufferPool)?
+  private var bufferPool: CVPixelBufferPool?
 
   private let latestLock = NSLock()
   private var latestBuffer: CVPixelBuffer?
@@ -307,9 +322,11 @@ final class CameraPipeline: NSObject, FlutterTexture,
       var failure: Error?
       do {
         if enabled {
-          try self.configureMultiCam(width: min(self.resolution.height, 1920))
-          // Over budget: two smaller feeds.
+          try self.configureMultiCam(width: self.resolution.height)
+          // Over budget: two smaller feeds, except at 4K, which would then
+          // be upscaled.
           if let multiCam = self.session as? AVCaptureMultiCamSession, multiCam.hardwareCost > 1 {
+            if self.resolution == .p2160 { throw CameraError.dualUnsupported }
             self.teardownSession()
             try self.configureMultiCam(width: 1280)
             if let retry = self.session as? AVCaptureMultiCamSession, retry.hardwareCost > 1 {
@@ -496,7 +513,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
     multiCam.beginConfiguration()
     defer { multiCam.commitConfiguration() }
 
-    // [targetWidth] is at most 1080p: 4K is not available with two cameras.
+    // 4K only on phones where `OutputResolution.dualSupported()` has it.
     for (position, output) in [(AVCaptureDevice.Position.back, videoOutput), (.front, frontOutput)] {
       guard
         let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
@@ -573,7 +590,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
   /// Renders the camera frame (with the background replaced, if any) into an
   /// output-sized buffer.
   private func composite(_ cameraBuffer: CVPixelBuffer) -> CVPixelBuffer? {
-    let extent = CGRect(origin: .zero, size: renderSize)
+    let extent = CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight)
     // In dual mode the background effect follows the front camera, the one
     // filming the person, whether it fills the frame or the small window.
     let mainHasBackground = !dual || position == .front
@@ -587,7 +604,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
       image = Self.addingPictureInPicture(window, to: image, at: frame)
     }
 
-    guard let output = makeOutputBuffer(size: extent.size) else { return nil }
+    guard let output = makeOutputBuffer() else { return nil }
     ciContext.render(image.cropped(to: extent), to: output)
     return output
   }
@@ -686,20 +703,18 @@ final class CameraPipeline: NSObject, FlutterTexture,
       .cropped(to: mask.extent)
   }
 
-  private func makeOutputBuffer(size: CGSize) -> CVPixelBuffer? {
-    if bufferPool?.size != size {
+  private func makeOutputBuffer() -> CVPixelBuffer? {
+    if bufferPool == nil {
       let attributes: [String: Any] = [
         kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-        kCVPixelBufferWidthKey as String: Int(size.width),
-        kCVPixelBufferHeightKey as String: Int(size.height),
+        kCVPixelBufferWidthKey as String: outputWidth,
+        kCVPixelBufferHeightKey as String: outputHeight,
         kCVPixelBufferIOSurfacePropertiesKey as String: [:],
         kCVPixelBufferMetalCompatibilityKey as String: true,
       ]
-      var pool: CVPixelBufferPool?
-      CVPixelBufferPoolCreate(nil, nil, attributes as CFDictionary, &pool)
-      bufferPool = pool.map { (size, $0) }
+      CVPixelBufferPoolCreate(nil, nil, attributes as CFDictionary, &bufferPool)
     }
-    guard let pool = bufferPool?.pool else { return nil }
+    guard let pool = bufferPool else { return nil }
     var buffer: CVPixelBuffer?
     CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer)
     return buffer

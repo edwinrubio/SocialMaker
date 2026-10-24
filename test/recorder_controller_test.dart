@@ -127,6 +127,15 @@ class FakeBgCamera implements BgCamera {
   @override
   Future<bool> dualCameraSupported() async => dualSupported;
 
+  List<VideoResolution> dualResolutions = const [
+    VideoResolution.p720,
+    VideoResolution.p1080,
+  ];
+
+  @override
+  Future<List<VideoResolution>> dualCameraResolutions() async =>
+      dualSupported ? dualResolutions : const [];
+
   @override
   Future<void> setDualCamera(bool enabled) async => dualCalls.add(enabled);
 
@@ -318,6 +327,37 @@ void main() {
     await controller.startSegment();
     await controller.toggleDual();
     expect(controller.dualEnabled, isTrue, reason: 'locked while recording');
+  });
+
+  test('dual camera at 4K only where both cameras offer it', () async {
+    camera.supported = VideoResolution.values;
+    settings.values[RecorderController.resolutionKey] = 'p2160';
+    controller = RecorderController(camera: camera, settings: settings);
+    await controller.initialize();
+    expect(controller.resolution, VideoResolution.p2160);
+
+    await controller.toggleDual();
+    expect(controller.dualEnabled, isFalse);
+    expect(camera.dualCalls, isEmpty);
+    expect(controller.error, contains('4K con las dos cámaras'));
+
+    final capable = FakeBgCamera()
+      ..supported = VideoResolution.values
+      ..dualResolutions = VideoResolution.values;
+    final other = RecorderController(camera: capable, settings: settings);
+    await other.initialize();
+    await other.toggleDual();
+    expect(other.dualEnabled, isTrue);
+  });
+
+  test('4K cannot be picked while dual mode lacks it', () async {
+    camera.supported = VideoResolution.values;
+    controller = RecorderController(camera: camera, settings: settings);
+    await controller.initialize();
+    await controller.toggleDual();
+
+    await controller.changeResolution(VideoResolution.p2160);
+    expect(controller.resolution, VideoResolution.p1080);
   });
 
   test('dual camera explains itself on phones without it', () async {

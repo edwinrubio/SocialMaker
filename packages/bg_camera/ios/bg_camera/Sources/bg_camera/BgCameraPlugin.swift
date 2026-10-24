@@ -62,6 +62,8 @@ public class BgCameraPlugin: NSObject, FlutterPlugin {
       }
     case "dualCameraSupported":
       result(CameraPipeline.dualSupported)
+    case "dualCameraResolutions":
+      result(OutputResolution.dualSupported().map(\.rawValue))
     case "setDualCamera":
       withPipeline(result) { pipeline in
         pipeline.setDual(args["enabled"] as? Bool ?? false) { error in
