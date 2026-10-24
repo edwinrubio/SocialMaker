@@ -132,15 +132,9 @@ final class CameraPipeline: NSObject, FlutterTexture,
   private var pipRect = CGRect(x: 0.58, y: 0.42, width: 0.28, height: 0.28)
 
   private let ciContext = CIContext(options: [.cacheIntermediates: false])
-  private let segmentation: VNGeneratePersonSegmentationRequest = {
-    let request = VNGeneratePersonSegmentationRequest()
-    request.qualityLevel = .balanced
-    request.outputPixelFormat = kCVPixelFormatType_OneComponent8
-    return request
-  }()
-  /// Dual mode segments both cameras off `queue`: waiting for Vision on
-  /// every frame, with both cameras and the encoder running, stalled the
-  /// picture and starved the window's camera. Frames use the latest mask.
+  /// Cameras are segmented off `queue`: waiting for Vision on every frame
+  /// held the picture under 30 fps (and with two cameras stalled it and
+  /// starved the window's camera). Frames use the latest mask.
   private let mainMasks = LatestMask(quality: .balanced, label: "bg_camera.segmentation.main")
   /// `.fast` is plenty at the window's size.
   private let windowMasks = LatestMask(quality: .fast, label: "bg_camera.segmentation.window")
@@ -278,6 +272,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
       do {
         try self.attachCamera(position: next)
         self.position = next
+        self.resetMasks()
       } catch {
         try? self.attachCamera(position: self.position)
       }
@@ -403,7 +398,6 @@ final class CameraPipeline: NSObject, FlutterTexture,
   }
 
   /// Composites one camera frame, shows it and records it. Runs on `queue`.
-
   private func process(_ cameraBuffer: CVPixelBuffer, at time: CMTime) {
     guard let frame = composite(cameraBuffer) else { return }
 
@@ -639,11 +633,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
 
   /// Vision's person mask for [cameraBuffer].
   private func personMask(for cameraBuffer: CVPixelBuffer, isWindow: Bool) -> CVPixelBuffer? {
-    if dual { return (isWindow ? windowMasks : mainMasks).mask(for: cameraBuffer, on: queue) }
-    // A fresh handler per frame: VNSequenceRequestHandler smooths the mask
-    // over time, which leaves a ghost of the previous pose when moving.
-    try? VNImageRequestHandler(cvPixelBuffer: cameraBuffer).perform([segmentation])
-    return segmentation.results?.first?.pixelBuffer
+    (isWindow ? windowMasks : mainMasks).mask(for: cameraBuffer, on: queue)
   }
 
   /// After the cameras swap or dual mode changes: drop masks of the old
@@ -763,6 +753,8 @@ private final class LatestMask {
       segmenting = true
       let started = generation
       segmentationQueue.async { [request] in
+        // A fresh handler per frame: VNSequenceRequestHandler smooths the
+        // mask over time, which leaves a ghost of the previous pose.
         try? VNImageRequestHandler(cvPixelBuffer: buffer).perform([request])
         let mask = request.results?.first?.pixelBuffer
         queue.async {
