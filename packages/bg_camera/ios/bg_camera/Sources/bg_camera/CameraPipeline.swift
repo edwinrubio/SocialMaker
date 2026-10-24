@@ -115,6 +115,17 @@ final class CameraPipeline: NSObject, FlutterTexture,
     request.outputPixelFormat = kCVPixelFormatType_OneComponent8
     return request
   }()
+  /// Segments the picture-in-picture window: `.fast` is plenty at its size.
+  private let windowSegmentation: VNGeneratePersonSegmentationRequest = {
+    let request = VNGeneratePersonSegmentationRequest()
+    request.qualityLevel = .fast
+    request.outputPixelFormat = kCVPixelFormatType_OneComponent8
+    return request
+  }()
+  /// The window's camera usually delivers fewer frames than the main one
+  /// composites: its mask is computed once per window frame, not per output
+  /// frame (doing it per output frame starved the window's camera).
+  private var windowMask: (source: CVPixelBuffer, mask: CVPixelBuffer)?
   private var bufferPool: CVPixelBufferPool?
 
   private let latestLock = NSLock()
@@ -241,6 +252,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
       if self.dual {
         self.position = next
         self.latestPip = nil  // Until the other camera's next frame.
+        self.windowMask = nil
         return
       }
       self.session.beginConfiguration()
@@ -278,6 +290,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
         if self.simulatorFeed != nil {
           self.dual = enabled
           self.latestPip = nil
+          self.windowMask = nil
           return completion(nil)
         }
       #endif
@@ -307,6 +320,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
         self.dual = false
       }
       self.latestPip = nil
+      self.windowMask = nil
       self.session.startRunning()
       completion(failure)
     }
@@ -560,8 +574,8 @@ final class CameraPipeline: NSObject, FlutterTexture,
     if dual, let pip = latestPip {
       let frame = Self.pipFrame(pipRect, in: extent)
       let window = filled(
-        pip, to: CGRect(origin: .zero, size: frame.size), withBackground: !mainHasBackground
-      ).transformed(by: CGAffineTransform(translationX: frame.minX, y: frame.minY))
+        pip, to: CGRect(origin: .zero, size: frame.size), withBackground: !mainHasBackground,
+        isWindow: true).transformed(by: CGAffineTransform(translationX: frame.minX, y: frame.minY))
       image = Self.addingPictureInPicture(window, to: image, at: frame)
     }
 
@@ -573,7 +587,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
   /// [cameraBuffer] cropped to fill [extent], with the background behind the
   /// person replaced when [withBackground] and one is set.
   private func filled(
-    _ cameraBuffer: CVPixelBuffer, to extent: CGRect, withBackground: Bool
+    _ cameraBuffer: CVPixelBuffer, to extent: CGRect, withBackground: Bool, isWindow: Bool = false
   ) -> CIImage {
     let frame = CIImage(cvPixelBuffer: cameraBuffer)
     let camera = frame.aspectFilled(to: extent)
@@ -581,11 +595,8 @@ final class CameraPipeline: NSObject, FlutterTexture,
       let backgroundImage = background.image(for: extent, camera: camera)
     else { return camera }
 
-    // A fresh handler per frame: VNSequenceRequestHandler smooths the mask
-    // over time, which leaves a ghost of the previous pose when moving.
-    try? VNImageRequestHandler(cvPixelBuffer: cameraBuffer).perform([segmentation])
     let mask: CIImage
-    if let maskBuffer = segmentation.results?.first?.pixelBuffer {
+    if let maskBuffer = personMask(for: cameraBuffer, isWindow: isWindow) {
       // Vision's mask has its own size and aspect ratio: stretch it over the
       // frame first, then crop it exactly like the camera.
       mask = Self.refined(CIImage(cvPixelBuffer: maskBuffer))
@@ -603,6 +614,18 @@ final class CameraPipeline: NSObject, FlutterTexture,
     return camera.applyingFilter(
       "CIBlendWithMask",
       parameters: [kCIInputBackgroundImageKey: backgroundImage, kCIInputMaskImageKey: mask])
+  }
+
+  /// Vision's person mask for [cameraBuffer].
+  private func personMask(for cameraBuffer: CVPixelBuffer, isWindow: Bool) -> CVPixelBuffer? {
+    if isWindow, let windowMask, windowMask.source === cameraBuffer { return windowMask.mask }
+    let request = isWindow ? windowSegmentation : segmentation
+    // A fresh handler per frame: VNSequenceRequestHandler smooths the mask
+    // over time, which leaves a ghost of the previous pose when moving.
+    try? VNImageRequestHandler(cvPixelBuffer: cameraBuffer).perform([request])
+    let mask = request.results?.first?.pixelBuffer
+    if isWindow { windowMask = mask.map { (cameraBuffer, $0) } }
+    return mask
   }
 
   #if targetEnvironment(simulator)
