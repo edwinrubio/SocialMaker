@@ -15,7 +15,7 @@ class Programs {
     /** One pass of a separable Gaussian blur; set [Program.texelStep] per direction. */
     val blur = Program(BLUR_FRAGMENT)
 
-    /** Second camera as a rounded window with a white rim; set [Program.pipSize]. */
+    /** Second camera as a rounded window; set [Program.pipSize]. */
     val pip = Program(PIP_FRAGMENT)
 
     class Program(
@@ -127,11 +127,10 @@ class Programs {
             uniform vec2 uPipSize;
             void main() {
                 float radius = uPipSize.x * 0.1;
-                float rim = uPipSize.x * 0.02;
                 vec2 q = abs(vQuadUv * uPipSize - uPipSize * 0.5) - (uPipSize * 0.5 - radius);
                 float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
                 if (d > 0.0) discard;
-                gl_FragColor = d > -rim ? vec4(1.0, 1.0, 1.0, 1.0) : texture2D(uCamera, vCameraUv);
+                gl_FragColor = texture2D(uCamera, vCameraUv);
             }
         """
 

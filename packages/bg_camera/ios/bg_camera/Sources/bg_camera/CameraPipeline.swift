@@ -565,8 +565,8 @@ final class CameraPipeline: NSObject, FlutterTexture,
     return output
   }
 
-  /// Draws [pip] as a rounded window with a white rim at [rect] (fractions of
-  /// [extent], top-left origin).
+  /// Draws [pip] as a rounded window at [rect] (fractions of [extent],
+  /// top-left origin).
   private static func addingPictureInPicture(
     _ pip: CIImage, to image: CIImage, at rect: CGRect, in extent: CGRect
   ) -> CIImage {
@@ -575,20 +575,16 @@ final class CameraPipeline: NSObject, FlutterTexture,
       x: rect.minX * extent.width, y: (1 - rect.maxY) * extent.height,
       width: rect.width * extent.width, height: rect.height * extent.height
     ).integral
-    let radius = frame.width * 0.1
-    let rim = frame.width * 0.02
-    func roundedRect(_ rect: CGRect, radius: CGFloat, color: CIColor) -> CIImage {
+    let mask =
       CIFilter(
         name: "CIRoundedRectangleGenerator",
-        parameters: ["inputExtent": CIVector(cgRect: rect), "inputRadius": radius, "inputColor": color]
+        parameters: [
+          "inputExtent": CIVector(cgRect: frame), "inputRadius": frame.width * 0.1, "inputColor": CIColor.white,
+        ]
       )?.outputImage ?? CIImage.empty()
-    }
-    let border = roundedRect(
-      frame.insetBy(dx: -rim, dy: -rim), radius: radius + rim, color: CIColor(red: 1, green: 1, blue: 1, alpha: 0.9))
-    let mask = roundedRect(frame, radius: radius, color: .white)
     return pip.aspectFilled(to: frame).applyingFilter(
       "CIBlendWithMask",
-      parameters: [kCIInputBackgroundImageKey: border.composited(over: image), kCIInputMaskImageKey: mask])
+      parameters: [kCIInputBackgroundImageKey: image, kCIInputMaskImageKey: mask])
   }
 
   /// Pulls the mask's edge slightly inside the person and softens it, so no
