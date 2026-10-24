@@ -85,6 +85,24 @@ void main() {
       print('SKIP background: no ${background.path}');
     }
 
+    // Frame rate: 24 fps is offered everywhere we test (iOS sim, emulator).
+    await tester.tap(find.byTooltip('Configuración'));
+    await wait(tester, const Duration(seconds: 1));
+    final fps24 = find.widgetWithText(ChoiceChip, '24 fps');
+    // ignore: avoid_print
+    print(
+      'FPS chips: ${[for (final r in VideoFrameRate.values) '${r.fps}=${tester.widget<ChoiceChip>(find.widgetWithText(ChoiceChip, r.label)).onSelected != null}']}',
+    );
+    if (tester.widget<ChoiceChip>(fps24).onSelected != null) {
+      await tester.tap(fps24);
+      await wait(tester, const Duration(seconds: 4));
+      expect(find.textContaining('· 24'), findsOneWidget);
+    } else {
+      await tester.tapAt(const Offset(10, 100)); // close the sheet
+      await wait(tester, const Duration(seconds: 1));
+    }
+    await step(tester, 'frame-rate');
+
     await hold(tester, const Duration(milliseconds: 2500));
     await tapRecord(tester, const Duration(milliseconds: 1500));
     await hold(tester, const Duration(seconds: 3), slideUp: 250);
@@ -122,17 +140,21 @@ void main() {
     await step(tester, 'switched-while-recording');
 
     if (await BgCamera().dualCameraSupported()) {
-      await tester.tap(find.text('Dos cámaras'));
+      await tester.tap(find.text('2 cámaras'));
       await wait(tester, const Duration(seconds: 2));
       expect(find.byKey(const Key('pip-window')), findsOneWidget);
       await step(tester, 'dual');
 
+      final before = tester.getTopLeft(find.byKey(const Key('pip-window')));
       await tester.drag(
         find.byKey(const Key('pip-window')),
-        const Offset(-250, -400),
+        const Offset(-150, -150),
       );
       await wait(tester, const Duration(seconds: 1));
-      await step(tester, 'dual-top-left');
+      final after = tester.getTopLeft(find.byKey(const Key('pip-window')));
+      expect(after.dx, lessThan(before.dx - 50), reason: 'window did not move');
+      expect(after.dy, lessThan(before.dy - 50), reason: 'window did not move');
+      await step(tester, 'dual-moved');
 
       // Swap the cameras in the middle of a fragment.
       await tester.tap(find.byType(RecordButton));

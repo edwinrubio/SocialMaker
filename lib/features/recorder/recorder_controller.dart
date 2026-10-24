@@ -19,7 +19,8 @@ class RecorderController extends ChangeNotifier {
 
   static const resolutionKey = 'resolution';
   static const blurStrengthKey = 'blur-strength';
-  static const pipCornerKey = 'pip-corner';
+  static const pipOriginKey = 'pip-origin';
+  static const frameRateKey = 'frame-rate';
 
   final BgCamera camera;
   final SettingsStore settings;
@@ -33,13 +34,21 @@ class RecorderController extends ChangeNotifier {
   /// 0 (subtle) to 1 (strong), for [BackgroundType.blur].
   double blurStrength = 0.5;
 
-  /// Both cameras at once: the other one in a window at [pipCorner].
+  /// Both cameras at once: the other one in a window at [pipOrigin]
+  /// (top-left corner, fractions of the frame).
   bool dualSupported = false;
   bool dualEnabled = false;
-  PipCorner pipCorner = PipCorner.bottomRight;
+  Offset pipOrigin = defaultPipOrigin;
 
   VideoResolution resolution = VideoResolution.p1080;
   List<VideoResolution> supportedResolutions = const [];
+
+  VideoFrameRate frameRate = VideoFrameRate.fps30;
+  Map<VideoResolution, List<VideoFrameRate>> supportedFrameRates = const {};
+
+  /// Rates available at [value] (30 fps when the device didn't say).
+  List<VideoFrameRate> frameRatesFor(VideoResolution value) =>
+      supportedFrameRates[value] ?? const [VideoFrameRate.fps30];
 
   double _lastZoom = 0;
 
@@ -81,19 +90,26 @@ class RecorderController extends ChangeNotifier {
       if (supportedResolutions.isEmpty) {
         supportedResolutions = await camera.supportedResolutions();
         resolution = _pickResolution(await settings.read(resolutionKey));
+        supportedFrameRates = {
+          for (final r in supportedResolutions)
+            r: await camera.supportedFrameRates(r),
+        };
+        frameRate = _pickFrameRate(await settings.read(frameRateKey));
         blurStrength =
             double.tryParse(await settings.read(blurStrengthKey) ?? '') ??
             blurStrength;
         dualSupported = await camera.dualCameraSupported();
-        final corner = await settings.read(pipCornerKey);
-        pipCorner = PipCorner.values.firstWhere(
-          (c) => c.name == corner,
-          orElse: () => pipCorner,
-        );
+        final saved = (await settings.read(pipOriginKey))?.split(',');
+        final x = double.tryParse(saved?.first ?? '');
+        final y = double.tryParse(saved?.last ?? '');
+        if (x != null && y != null) pipOrigin = pipRectAt(Offset(x, y)).topLeft;
       }
-      preview = await camera.initialize(resolution: resolution);
+      preview = await camera.initialize(
+        resolution: resolution,
+        frameRate: frameRate,
+      );
       if (dualEnabled) {
-        await camera.setPictureInPicture(pipRectFor(pipCorner));
+        await camera.setPictureInPicture(pipRectAt(pipOrigin));
         await camera.setDualCamera(true);
       }
       if (backgroundType != BackgroundType.none) {
@@ -181,15 +197,34 @@ class RecorderController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Changes the output size. Fragments can only be merged at one size, so
-  /// the existing ones are deleted; ask the user before calling this.
+  /// Changes the output size (and the frame rate, if the current one isn't
+  /// available at it). Fragments can only be merged in one format, so the
+  /// existing ones are deleted; ask the user before calling this.
   Future<void> changeResolution(VideoResolution value) async {
     if (value == resolution || _recording) return;
-    clearSegments();
     resolution = value;
+    await settings.write(resolutionKey, value.name);
+    if (!frameRatesFor(value).contains(frameRate)) {
+      frameRate = _pickFrameRate(frameRate.name);
+      await settings.write(frameRateKey, frameRate.name);
+    }
+    await _reopen();
+  }
+
+  /// Changes the frames per second; deletes the fragments like
+  /// [changeResolution].
+  Future<void> changeFrameRate(VideoFrameRate value) async {
+    if (value == frameRate || _recording) return;
+    if (!frameRatesFor(resolution).contains(value)) return;
+    frameRate = value;
+    await settings.write(frameRateKey, value.name);
+    await _reopen();
+  }
+
+  Future<void> _reopen() async {
+    clearSegments();
     preview = null;
     notifyListeners();
-    await settings.write(resolutionKey, value.name);
     await camera.dispose();
     await initialize();
   }
@@ -239,7 +274,7 @@ class RecorderController extends ChangeNotifier {
     if (_recording || !dualSupported || preview == null) return;
     final enable = !dualEnabled;
     try {
-      if (enable) await camera.setPictureInPicture(pipRectFor(pipCorner));
+      if (enable) await camera.setPictureInPicture(pipRectAt(pipOrigin));
       await camera.setDualCamera(enable);
       dualEnabled = enable;
       error = null;
@@ -250,13 +285,16 @@ class RecorderController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Moves the second camera's window; also while recording.
-  Future<void> setPipCorner(PipCorner corner) async {
-    if (corner == pipCorner) return;
-    pipCorner = corner;
+  /// Moves the second camera's window (live while dragging, also while
+  /// recording); with [done], remembers where it was left.
+  Future<void> setPipOrigin(Offset origin, {bool done = false}) async {
+    final rect = pipRectAt(origin);
+    pipOrigin = rect.topLeft;
     notifyListeners();
-    await camera.setPictureInPicture(pipRectFor(corner));
-    await settings.write(pipCornerKey, corner.name);
+    await camera.setPictureInPicture(rect);
+    if (done) {
+      await settings.write(pipOriginKey, '${pipOrigin.dx},${pipOrigin.dy}');
+    }
   }
 
   /// Merges the remaining fragments, in order, and returns the video path.
@@ -288,6 +326,21 @@ class RecorderController extends ChangeNotifier {
     return supported.lastWhere(
       (r) => r.index <= VideoResolution.p1080.index,
       orElse: () => supported.first,
+    );
+  }
+
+  /// [saved] if available at the current resolution, else the highest
+  /// rate up to it (30 fps when nothing was saved).
+  VideoFrameRate _pickFrameRate(String? saved) {
+    final available = frameRatesFor(resolution);
+    final wanted = VideoFrameRate.values.firstWhere(
+      (r) => r.name == saved,
+      orElse: () => VideoFrameRate.fps30,
+    );
+    if (available.contains(wanted)) return wanted;
+    return available.lastWhere(
+      (r) => r.fps <= wanted.fps,
+      orElse: () => available.first,
     );
   }
 

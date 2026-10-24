@@ -1,21 +1,29 @@
 import 'package:bg_camera/bg_camera.dart';
 import 'package:flutter/material.dart';
 
-/// Output-resolution picker. Resolves to the chosen value, or null if the
-/// sheet was dismissed or the user kept the current one.
-Future<VideoResolution?> showSettingsSheet(
+/// What the recording settings sheet changes.
+typedef VideoSettings = ({
+  VideoResolution resolution,
+  VideoFrameRate frameRate,
+});
+
+/// Resolution and frame-rate picker. Resolves to the new settings, or null if
+/// the sheet was dismissed or nothing changed.
+Future<VideoSettings?> showSettingsSheet(
   BuildContext context, {
-  required VideoResolution current,
-  required List<VideoResolution> supported,
+  required VideoSettings current,
+  required List<VideoResolution> supportedResolutions,
+  required List<VideoFrameRate> Function(VideoResolution) frameRatesFor,
   required int fragmentCount,
 }) {
-  return showModalBottomSheet<VideoResolution>(
+  return showModalBottomSheet<VideoSettings>(
     context: context,
     backgroundColor: const Color(0xEE161616),
     showDragHandle: true,
     builder: (_) => _SettingsSheet(
       current: current,
-      supported: supported,
+      supportedResolutions: supportedResolutions,
+      frameRatesFor: frameRatesFor,
       fragmentCount: fragmentCount,
     ),
   );
@@ -24,15 +32,17 @@ Future<VideoResolution?> showSettingsSheet(
 class _SettingsSheet extends StatelessWidget {
   const _SettingsSheet({
     required this.current,
-    required this.supported,
+    required this.supportedResolutions,
+    required this.frameRatesFor,
     required this.fragmentCount,
   });
 
-  final VideoResolution current;
-  final List<VideoResolution> supported;
+  final VideoSettings current;
+  final List<VideoResolution> supportedResolutions;
+  final List<VideoFrameRate> Function(VideoResolution) frameRatesFor;
   final int fragmentCount;
 
-  Future<void> _choose(BuildContext context, VideoResolution value) async {
+  Future<void> _choose(BuildContext context, VideoSettings value) async {
     if (value == current) {
       Navigator.pop(context);
       return;
@@ -41,11 +51,11 @@ class _SettingsSheet extends StatelessWidget {
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
-          title: const Text('¿Cambiar la resolución?'),
+          title: const Text('¿Cambiar la configuración?'),
           content: Text(
-            'Todos los fragmentos de un video deben tener la misma resolución. '
-            'Se borrará${fragmentCount == 1 ? '' : 'n'} $fragmentCount '
-            'fragmento${fragmentCount == 1 ? '' : 's'}.',
+            'Todos los fragmentos de un video deben tener la misma resolución '
+            'y los mismos fps. Se borrará${fragmentCount == 1 ? '' : 'n'} '
+            '$fragmentCount fragmento${fragmentCount == 1 ? '' : 's'}.',
           ),
           actions: [
             TextButton(
@@ -67,6 +77,8 @@ class _SettingsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final hint = theme.textTheme.bodySmall?.copyWith(color: Colors.white60);
+    final rates = frameRatesFor(current.resolution);
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -84,19 +96,50 @@ class _SettingsSheet extends StatelessWidget {
                 for (final resolution in VideoResolution.values)
                   ChoiceChip(
                     label: Text(resolution.label),
-                    selected: resolution == current,
-                    onSelected: supported.contains(resolution)
-                        ? (_) => _choose(context, resolution)
+                    selected: resolution == current.resolution,
+                    onSelected: supportedResolutions.contains(resolution)
+                        ? (_) => _choose(context, (
+                            resolution: resolution,
+                            frameRate: current.frameRate,
+                          ))
                         : null,
                   ),
               ],
             ),
             const SizedBox(height: 8),
             Text(
-              supported.contains(VideoResolution.p2160)
+              supportedResolutions.contains(VideoResolution.p2160)
                   ? 'Más resolución = más calidad y archivos más grandes.'
                   : 'Este teléfono no puede grabar en 4K con efectos.',
-              style: theme.textTheme.bodySmall?.copyWith(color: Colors.white60),
+              style: hint,
+            ),
+            const SizedBox(height: 20),
+            Text('Fotogramas por segundo', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final rate in VideoFrameRate.values)
+                  ChoiceChip(
+                    label: Text(rate.label),
+                    selected: rate == current.frameRate,
+                    onSelected: rates.contains(rate)
+                        ? (_) => _choose(context, (
+                            resolution: current.resolution,
+                            frameRate: rate,
+                          ))
+                        : null,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              rates.contains(VideoFrameRate.fps60)
+                  ? '24 fps: aspecto de cine · 30 fps: estándar · '
+                        '60 fps: movimiento más fluido.'
+                  : 'Este teléfono no graba a 60 fps en '
+                        '${current.resolution.label}.',
+              style: hint,
             ),
           ],
         ),

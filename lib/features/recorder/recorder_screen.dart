@@ -65,13 +65,20 @@ class _RecorderScreenState extends State<RecorderScreen>
   }
 
   Future<void> _openSettings() async {
+    final c = _controller;
     final choice = await showSettingsSheet(
       context,
-      current: _controller.resolution,
-      supported: _controller.supportedResolutions,
-      fragmentCount: _controller.segments.length,
+      current: (resolution: c.resolution, frameRate: c.frameRate),
+      supportedResolutions: c.supportedResolutions,
+      frameRatesFor: c.frameRatesFor,
+      fragmentCount: c.segments.length,
     );
-    if (choice != null) await _controller.changeResolution(choice);
+    if (choice == null) return;
+    if (choice.resolution != c.resolution) {
+      await c.changeResolution(choice.resolution);
+    } else {
+      await c.changeFrameRate(choice.frameRate);
+    }
   }
 
   void _finish() {
@@ -106,8 +113,8 @@ class _RecorderScreenState extends State<RecorderScreen>
                     preview.width.toDouble(),
                     preview.height.toDouble(),
                   ),
-                  corner: _controller.pipCorner,
-                  onCorner: _controller.setPipCorner,
+                  origin: _controller.pipOrigin,
+                  onMove: _controller.setPipOrigin,
                   onSwap: _controller.switchCamera,
                 ),
               SafeArea(child: _buildOverlay()),
@@ -187,32 +194,37 @@ class _RecorderScreenState extends State<RecorderScreen>
             ],
           ),
           const SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _PillButton(
-                icon: Icons.auto_awesome,
-                label: 'Filtros',
-                active: c.backgroundType != BackgroundType.none,
-                onPressed: idle && c.preview != null ? _openFilters : null,
-              ),
-              const SizedBox(width: 8),
-              _PillButton(
-                icon: Icons.settings_outlined,
-                label: c.resolution.label,
-                tooltip: 'Configuración',
-                onPressed: idle && c.preview != null ? _openSettings : null,
-              ),
-              if (c.dualSupported) ...[
+          // One line; shrinks a little on narrow phones instead of overflowing.
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _PillButton(
+                  icon: Icons.auto_awesome,
+                  label: 'Filtros',
+                  active: c.backgroundType != BackgroundType.none,
+                  onPressed: idle && c.preview != null ? _openFilters : null,
+                ),
                 const SizedBox(width: 8),
                 _PillButton(
-                  icon: Icons.picture_in_picture_alt_outlined,
-                  label: 'Dos cámaras',
-                  active: c.dualEnabled,
-                  onPressed: idle && c.preview != null ? c.toggleDual : null,
+                  icon: Icons.settings_outlined,
+                  label: '${c.resolution.label} · ${c.frameRate.fps}',
+                  tooltip: 'Configuración',
+                  onPressed: idle && c.preview != null ? _openSettings : null,
                 ),
+                if (c.dualSupported) ...[
+                  const SizedBox(width: 8),
+                  _PillButton(
+                    icon: Icons.picture_in_picture_alt_outlined,
+                    label: '2 cámaras',
+                    tooltip: 'Grabar con las dos cámaras',
+                    active: c.dualEnabled,
+                    onPressed: idle && c.preview != null ? c.toggleDual : null,
+                  ),
+                ],
               ],
-            ],
+            ),
           ),
         ],
       ),

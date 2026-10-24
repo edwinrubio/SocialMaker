@@ -7,28 +7,23 @@ enum CameraLens { front, back }
 /// What is drawn behind the segmented person.
 enum BackgroundType { none, image, video, blur }
 
-/// Corner of the frame where the second camera's window sits in dual mode.
-enum PipCorner { topLeft, topRight, bottomLeft, bottomRight }
+/// Side of the second camera's window in dual mode, as a fraction of the
+/// recorded frame. The window has the frame's aspect ratio, so it is square
+/// in these units.
+const pipSize = 0.28;
 
-/// The picture-in-picture window for [corner], as fractions of the recorded
-/// frame (top-left origin). The native renderer draws it there and the app's
-/// overlay uses the same rect, so both always agree. It has the frame's aspect
-/// ratio, which makes it square in these units.
-Rect pipRectFor(PipCorner corner) {
-  const size = 0.28;
-  // Kept clear of the sides the preview crops on tall screens, of the top
-  // bar, and of the bottom controls (and the apps' UI once shared).
-  const side = 0.14;
-  const top = 0.12;
-  const bottom = 0.30;
-  final left = corner == PipCorner.topLeft || corner == PipCorner.bottomLeft
-      ? side
-      : 1 - side - size;
-  final y = corner == PipCorner.topLeft || corner == PipCorner.topRight
-      ? top
-      : 1 - bottom - size;
-  return Rect.fromLTWH(left, y, size, size);
-}
+/// Where the window starts: right side, above the bottom controls.
+const defaultPipOrigin = Offset(0.58, 0.42);
+
+/// The window at [origin] (its top-left corner, in fractions of the frame,
+/// kept inside it). The native renderer draws it there and the app's overlay
+/// uses the same rect, so both always agree.
+Rect pipRectAt(Offset origin) => Rect.fromLTWH(
+  origin.dx.clamp(0.0, 1 - pipSize),
+  origin.dy.clamp(0.0, 1 - pipSize),
+  pipSize,
+  pipSize,
+);
 
 /// Result of [BgCamera.shareToApp].
 enum ShareOutcome {
@@ -39,6 +34,19 @@ enum ShareOutcome {
   openedSaved,
 
   notInstalled,
+}
+
+/// Frames per second of the recorded video.
+enum VideoFrameRate {
+  fps24(24),
+  fps30(30),
+  fps60(60);
+
+  const VideoFrameRate(this.fps);
+
+  final int fps;
+
+  String get label => '$fps fps';
 }
 
 /// Output resolution of the recorded video (portrait).
@@ -149,13 +157,30 @@ class BgCamera {
     ];
   }
 
+  /// Frame rates this device can record at [resolution].
+  Future<List<VideoFrameRate>> supportedFrameRates(
+    VideoResolution resolution,
+  ) async {
+    final rates =
+        await _channel.invokeListMethod<int>('supportedFrameRates', {
+          'resolution': resolution.name,
+        }) ??
+        const <int>[];
+    return [
+      for (final rate in VideoFrameRate.values)
+        if (rates.contains(rate.fps)) rate,
+    ];
+  }
+
   Future<CameraPreviewInfo> initialize({
     CameraLens lens = CameraLens.front,
     VideoResolution resolution = VideoResolution.p1080,
+    VideoFrameRate frameRate = VideoFrameRate.fps30,
   }) async {
     final info = await _invokeMap('initialize', {
       'lens': lens.name,
       'resolution': resolution.name,
+      'frameRate': frameRate.fps,
     });
     return CameraPreviewInfo(
       textureId: info['textureId'] as int,
@@ -195,7 +220,7 @@ class BgCamera {
   Future<void> setDualCamera(bool enabled) =>
       _channel.invokeMethod<void>('setDualCamera', {'enabled': enabled});
 
-  /// [rect] in fractions of the frame; see [pipRectFor].
+  /// [rect] in fractions of the frame; see [pipRectAt].
   Future<void> setPictureInPicture(Rect rect) => _channel.invokeMethod<void>(
     'setPictureInPicture',
     {'x': rect.left, 'y': rect.top, 'width': rect.width, 'height': rect.height},

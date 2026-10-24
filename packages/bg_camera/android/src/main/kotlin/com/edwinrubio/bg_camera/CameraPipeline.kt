@@ -9,6 +9,7 @@ import android.hardware.camera2.CameraManager
 import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.util.Log
+import android.util.Range
 import android.util.Size
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
@@ -72,6 +73,48 @@ enum class OutputResolution(
             return supported.ifEmpty { listOf(p720) }
         }
 
+        /** Frame rates (24, 30, 60) both the front camera and an H.264 encoder offer at [resolution]. */
+        fun supportedFrameRates(
+            context: Context,
+            resolution: OutputResolution,
+        ): List<Int> {
+            val encoders =
+                MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.filter { info ->
+                    info.isEncoder && info.supportedTypes.any { it.equals(MediaFormat.MIMETYPE_VIDEO_AVC, true) }
+                }
+            val rates =
+                listOf(24, 30, 60).filter { rate ->
+                    val cameraOk = cameraFpsRange(context, front = true, rate) != null
+                    val encoderOk =
+                        encoders.any {
+                            it
+                                .getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                                .videoCapabilities
+                                .areSizeAndRateSupported(resolution.width, resolution.height, rate.toDouble())
+                        }
+                    cameraOk && encoderOk
+                }
+            return rates.ifEmpty { listOf(30) }
+        }
+
+        /** The camera's auto-exposure range for [rate]: fixed if offered, else one topping out at it. */
+        fun cameraFpsRange(
+            context: Context,
+            front: Boolean,
+            rate: Int,
+        ): Range<Int>? {
+            val manager = context.getSystemService(CameraManager::class.java) ?: return null
+            val facing = if (front) CameraCharacteristics.LENS_FACING_FRONT else CameraCharacteristics.LENS_FACING_BACK
+            val ranges =
+                manager.cameraIdList
+                    .map(manager::getCameraCharacteristics)
+                    .firstOrNull { it.get(CameraCharacteristics.LENS_FACING) == facing }
+                    ?.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+                    .orEmpty()
+            return ranges.firstOrNull { it.lower == rate && it.upper == rate }
+                ?: ranges.filter { it.upper == rate }.maxByOrNull { it.lower }
+        }
+
         private fun frontCameraSizes(context: Context): List<Size> {
             val manager = context.getSystemService(CameraManager::class.java) ?: return emptyList()
             return manager.cameraIdList
@@ -101,6 +144,7 @@ class CameraPipeline(
     private val context: Context,
     textures: TextureRegistry,
     val resolution: OutputResolution,
+    private val frameRate: Int,
 ) : LifecycleOwner {
     private val lifecycleRegistry = LifecycleRegistry(this)
     override val lifecycle: Lifecycle get() = lifecycleRegistry
@@ -108,7 +152,7 @@ class CameraPipeline(
     private val producer = textures.createSurfaceProducer()
     val textureId: Long get() = producer.id()
 
-    private val renderer = GlRenderer(context, resolution)
+    private val renderer = GlRenderer(context, resolution, frameRate)
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private var cameraProvider: ProcessCameraProvider? = null
     private var camera: Camera? = null
@@ -230,7 +274,8 @@ class CameraPipeline(
                                 ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER,
                             ),
                         ).build(),
-                ).build()
+                ).apply { OutputResolution.cameraFpsRange(context, front, frameRate)?.let { setTargetFrameRate(it) } }
+                .build()
         val mirror = front
         preview.setSurfaceProvider(ContextCompat.getMainExecutor(context)) { request ->
             renderer.provideCameraSurface(request, mirror)

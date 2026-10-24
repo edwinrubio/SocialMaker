@@ -38,7 +38,11 @@ public class BgCameraPlugin: NSObject, FlutterPlugin {
       initialize(
         lens: args["lens"] as? String ?? "front",
         resolution: OutputResolution(rawValue: args["resolution"] as? String ?? "") ?? .p1080,
+        frameRate: args["frameRate"] as? Int ?? 30,
         result: result)
+    case "supportedFrameRates":
+      let resolution = OutputResolution(rawValue: args["resolution"] as? String ?? "") ?? .p1080
+      result(resolution.supportedFrameRates())
     case "setZoom":
       withPipeline(result) {
         $0.setZoom(args["fraction"] as? Double ?? 0)
@@ -135,9 +139,11 @@ public class BgCameraPlugin: NSObject, FlutterPlugin {
     }
   }
 
-  private func initialize(lens: String, resolution: OutputResolution, result: @escaping FlutterResult) {
+  private func initialize(
+    lens: String, resolution: OutputResolution, frameRate: Int, result: @escaping FlutterResult
+  ) {
     dispose()
-    let pipeline = CameraPipeline(textures: textures, resolution: resolution)
+    let pipeline = CameraPipeline(textures: textures, resolution: resolution, frameRate: frameRate)
     do {
       try pipeline.start(position: lens == "back" ? .back : .front)
     } catch {

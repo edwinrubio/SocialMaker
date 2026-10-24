@@ -57,12 +57,26 @@ class FakeBgCamera implements BgCamera {
   @override
   Future<bool> requestPermissions() async => grantPermissions;
 
+  VideoFrameRate? initializedFrameRate;
+  Map<VideoResolution, List<VideoFrameRate>> frameRates = {
+    VideoResolution.p720: VideoFrameRate.values,
+    VideoResolution.p1080: VideoFrameRate.values,
+    VideoResolution.p2160: const [VideoFrameRate.fps24, VideoFrameRate.fps30],
+  };
+
+  @override
+  Future<List<VideoFrameRate>> supportedFrameRates(
+    VideoResolution resolution,
+  ) async => frameRates[resolution] ?? const [];
+
   @override
   Future<CameraPreviewInfo> initialize({
     CameraLens lens = CameraLens.front,
     VideoResolution resolution = VideoResolution.p1080,
+    VideoFrameRate frameRate = VideoFrameRate.fps30,
   }) async {
     initializedWith = resolution;
+    initializedFrameRate = frameRate;
     return CameraPreviewInfo(
       textureId: 1,
       width: resolution.width,
@@ -265,25 +279,48 @@ void main() {
     expect(settings.values[RecorderController.blurStrengthKey], '0.8');
   });
 
+  test('dual camera turns on at the saved spot, not while recording', () async {
+    settings.values[RecorderController.pipOriginKey] = '0.1,0.2';
+    controller = RecorderController(camera: camera, settings: settings);
+    await controller.initialize();
+
+    await controller.toggleDual();
+    expect(controller.dualEnabled, isTrue);
+    expect(camera.dualCalls, [true]);
+    expect(camera.pipRects.last, pipRectAt(const Offset(0.1, 0.2)));
+
+    await controller.startSegment();
+    await controller.toggleDual();
+    expect(controller.dualEnabled, isTrue, reason: 'locked while recording');
+  });
+
+  test('the window moves live, stays in the frame, saved on release', () async {
+    await controller.setPipOrigin(const Offset(0.3, 0.3));
+    expect(camera.pipRects.last.topLeft, const Offset(0.3, 0.3));
+    expect(settings.values[RecorderController.pipOriginKey], isNull);
+
+    await controller.setPipOrigin(const Offset(0.95, -1), done: true);
+    expect(controller.pipOrigin, const Offset(1 - pipSize, 0));
+    expect(
+      settings.values[RecorderController.pipOriginKey],
+      '${1 - pipSize},0.0',
+    );
+  });
+
   test(
-    'dual camera turns on with the saved corner, not while recording',
+    'frame rate: saved, applied on reopen, lowered when 4K lacks it',
     () async {
-      settings.values[RecorderController.pipCornerKey] = 'topLeft';
-      controller = RecorderController(camera: camera, settings: settings);
-      await controller.initialize();
+      await record(const Duration(seconds: 1));
+      await controller.changeFrameRate(VideoFrameRate.fps60);
+      expect(controller.segments, isEmpty);
+      expect(camera.initializedFrameRate, VideoFrameRate.fps60);
+      expect(settings.values[RecorderController.frameRateKey], 'fps60');
 
-      await controller.toggleDual();
-      expect(controller.dualEnabled, isTrue);
-      expect(camera.dualCalls, [true]);
-      expect(camera.pipRects.last, pipRectFor(PipCorner.topLeft));
-
-      await controller.startSegment();
-      await controller.toggleDual();
-      expect(controller.dualEnabled, isTrue, reason: 'locked while recording');
-
-      await controller.setPipCorner(PipCorner.bottomRight);
-      expect(camera.pipRects.last, pipRectFor(PipCorner.bottomRight));
-      expect(settings.values[RecorderController.pipCornerKey], 'bottomRight');
+      camera.supported = VideoResolution.values;
+      controller.supportedResolutions = VideoResolution.values;
+      await controller.changeResolution(VideoResolution.p2160);
+      expect(controller.frameRate, VideoFrameRate.fps30);
+      expect(camera.initializedFrameRate, VideoFrameRate.fps30);
     },
   );
 

@@ -47,6 +47,26 @@ enum OutputResolution: String, CaseIterable {
     let supported = allCases.filter { camera.supportsSessionPreset($0.preset) }
     return supported.isEmpty ? [.p720] : supported
   }
+
+  /// Frame rates (24, 30, 60) the front camera offers at this size.
+  func supportedFrameRates() -> [Int] {
+    guard
+      let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front)
+    else { return [24, 30] }
+    let rates = [24, 30, 60].filter { rate in
+      camera.formats.contains { fits($0, frameRate: rate) }
+    }
+    return rates.isEmpty ? [30] : rates
+  }
+
+  /// Whether [format] covers this size (landscape) at [frameRate].
+  func fits(_ format: AVCaptureDevice.Format, frameRate: Int) -> Bool {
+    let size = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+    return Int(size.width) >= height && Int(size.height) >= width
+      && format.videoSupportedFrameRateRanges.contains {
+        $0.minFrameRate <= Double(frameRate) && Double(frameRate) <= $0.maxFrameRate
+      }
+  }
 }
 
 /// Captures camera + microphone, replaces the background behind the person and
@@ -62,6 +82,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
   AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate
 {
   let resolution: OutputResolution
+  let frameRate: Int
   var outputWidth: Int { resolution.width }
   var outputHeight: Int { resolution.height }
 
@@ -108,9 +129,10 @@ final class CameraPipeline: NSObject, FlutterTexture,
     set { queue.async { self._background = newValue } }
   }
 
-  init(textures: FlutterTextureRegistry, resolution: OutputResolution) {
+  init(textures: FlutterTextureRegistry, resolution: OutputResolution, frameRate: Int) {
     self.textures = textures
     self.resolution = resolution
+    self.frameRate = frameRate
     super.init()
     makeOutputs()
   }
@@ -341,7 +363,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
       pendingStart = false
       do {
         writer = try SegmentWriter(
-          width: outputWidth, height: outputHeight, bitRate: resolution.bitRate, startTime: time)
+          width: outputWidth, height: outputHeight, bitRate: bitRate, startTime: time)
       } catch {
         NSLog("bg_camera: cannot start segment: \(error)")
       }
@@ -381,7 +403,31 @@ final class CameraPipeline: NSObject, FlutterTexture,
     guard session.canAddInput(input) else { throw CameraError.cannotAddInput }
     session.addInput(input)
     cameraInputs = [position: input]
+    applyFrameRate(device)
   }
+
+  /// Locks [device] to `frameRate`, switching to a format that offers it at
+  /// the output size when the session preset's doesn't. Inside a session
+  /// configuration.
+  private func applyFrameRate(_ device: AVCaptureDevice) {
+    let format =
+      resolution.fits(device.activeFormat, frameRate: frameRate)
+      ? device.activeFormat
+      : device.formats.filter { resolution.fits($0, frameRate: frameRate) }.min {
+        let a = CMVideoFormatDescriptionGetDimensions($0.formatDescription)
+        let b = CMVideoFormatDescriptionGetDimensions($1.formatDescription)
+        return Int(a.width) * Int(a.height) < Int(b.width) * Int(b.height)
+      }
+    guard let format, (try? device.lockForConfiguration()) != nil else { return }
+    if format != device.activeFormat { device.activeFormat = format }
+    let duration = CMTime(value: 1, timescale: CMTimeScale(frameRate))
+    device.activeVideoMinFrameDuration = duration
+    device.activeVideoMaxFrameDuration = duration
+    device.unlockForConfiguration()
+  }
+
+  /// More frames need more bits for the same quality.
+  private var bitRate: Int { frameRate > 30 ? resolution.bitRate * 3 / 2 : resolution.bitRate }
 
   /// A fresh single-camera session with the current main camera. On `queue`.
   private func configureSingle() throws {

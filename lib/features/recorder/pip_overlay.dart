@@ -3,22 +3,26 @@ import 'package:flutter/material.dart';
 
 /// Touch target over the second camera's window, which the native renderer
 /// draws into the preview (and the recording). Tap swaps the cameras; drag
-/// moves it and it snaps to the nearest corner on release.
+/// moves the window itself, live, and it stays where it is released.
 ///
 /// The preview fills the screen like `BoxFit.cover` over a frame of
-/// [frameSize], so the window's frame rect is mapped the same way.
+/// [frameSize], so frame fractions are mapped the same way.
 class PipOverlay extends StatefulWidget {
   const PipOverlay({
     super.key,
     required this.frameSize,
-    required this.corner,
-    required this.onCorner,
+    required this.origin,
+    required this.onMove,
     required this.onSwap,
   });
 
   final Size frameSize;
-  final PipCorner corner;
-  final ValueChanged<PipCorner> onCorner;
+
+  /// Window's top-left corner, in fractions of the frame.
+  final Offset origin;
+
+  /// Called while dragging, and with `done` on release.
+  final Future<void> Function(Offset origin, {bool done}) onMove;
   final VoidCallback onSwap;
 
   @override
@@ -26,35 +30,62 @@ class PipOverlay extends StatefulWidget {
 }
 
 class _PipOverlayState extends State<PipOverlay> {
-  Offset? _drag;
+  static const _margin = 8.0;
 
-  /// [rect] (fractions of the frame) in screen coordinates.
-  Rect _toScreen(Rect rect, Size screen) {
+  /// Origin while dragging (ahead of the controller's, which follows).
+  Offset? _dragOrigin;
+
+  /// Screen points per frame unit, and where the frame's (0, 0) lands.
+  ({double scale, Offset offset}) _cover(Size screen) {
     final frame = widget.frameSize;
     final scale = (screen.width / frame.width) > (screen.height / frame.height)
         ? screen.width / frame.width
         : screen.height / frame.height;
-    final dx = (screen.width - frame.width * scale) / 2;
-    final dy = (screen.height - frame.height * scale) / 2;
+    return (
+      scale: scale,
+      offset: Offset(
+        (screen.width - frame.width * scale) / 2,
+        (screen.height - frame.height * scale) / 2,
+      ),
+    );
+  }
+
+  Rect _toScreen(Rect rect, Size screen) {
+    final (:scale, :offset) = _cover(screen);
+    final frame = widget.frameSize;
     return Rect.fromLTWH(
-      dx + rect.left * frame.width * scale,
-      dy + rect.top * frame.height * scale,
+      offset.dx + rect.left * frame.width * scale,
+      offset.dy + rect.top * frame.height * scale,
       rect.width * frame.width * scale,
       rect.height * frame.height * scale,
     );
   }
 
-  void _end(Size screen, Rect home) {
-    final center = home.center + (_drag ?? Offset.zero);
-    final left = center.dx < screen.width / 2;
-    final top = center.dy < screen.height / 2;
-    setState(() => _drag = null);
-    widget.onCorner(switch ((top, left)) {
-      (true, true) => PipCorner.topLeft,
-      (true, false) => PipCorner.topRight,
-      (false, true) => PipCorner.bottomLeft,
-      (false, false) => PipCorner.bottomRight,
-    });
+  /// Moves the window by [delta] screen points, kept on the visible screen.
+  void _drag(Offset delta, Size screen) {
+    final (:scale, :offset) = _cover(screen);
+    final frame = widget.frameSize;
+    final current = _toScreen(pipRectAt(_dragOrigin ?? widget.origin), screen);
+    final left = (current.left + delta.dx).clamp(
+      _margin,
+      screen.width - current.width - _margin,
+    );
+    final top = (current.top + delta.dy).clamp(
+      _margin,
+      screen.height - current.height - _margin,
+    );
+    final origin = Offset(
+      (left - offset.dx) / (frame.width * scale),
+      (top - offset.dy) / (frame.height * scale),
+    );
+    setState(() => _dragOrigin = origin);
+    widget.onMove(origin);
+  }
+
+  void _release() {
+    final origin = _dragOrigin;
+    setState(() => _dragOrigin = null);
+    if (origin != null) widget.onMove(origin, done: true);
   }
 
   @override
@@ -62,9 +93,7 @@ class _PipOverlayState extends State<PipOverlay> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final screen = constraints.biggest;
-        final home = _toScreen(pipRectFor(widget.corner), screen);
-        final rect = home.shift(_drag ?? Offset.zero);
-        final radius = BorderRadius.circular(rect.width * 0.1);
+        final rect = _toScreen(pipRectAt(_dragOrigin ?? widget.origin), screen);
         return Stack(
           children: [
             Positioned.fromRect(
@@ -73,27 +102,15 @@ class _PipOverlayState extends State<PipOverlay> {
                 button: true,
                 label:
                     'Segunda cámara: toca para intercambiar, '
-                    'arrastra para moverla a otra esquina',
+                    'arrástrala para moverla',
                 child: GestureDetector(
                   key: const Key('pip-window'),
                   behavior: HitTestBehavior.opaque,
                   onTap: widget.onSwap,
-                  onPanStart: (_) => setState(() => _drag = Offset.zero),
-                  onPanUpdate: (d) =>
-                      setState(() => _drag = (_drag ?? Offset.zero) + d.delta),
-                  onPanEnd: (_) => _end(screen, home),
-                  onPanCancel: () => setState(() => _drag = null),
-                  // While dragging, an outline follows the finger; the
-                  // camera window itself moves once it lands in a corner.
-                  child: _drag == null
-                      ? const SizedBox.expand()
-                      : DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: Colors.white24,
-                            borderRadius: radius,
-                            border: Border.all(color: Colors.white, width: 2),
-                          ),
-                        ),
+                  onPanUpdate: (d) => _drag(d.delta, screen),
+                  onPanEnd: (_) => _release(),
+                  onPanCancel: _release,
+                  child: const SizedBox.expand(),
                 ),
               ),
             ),

@@ -55,7 +55,21 @@ class BgCameraPlugin :
                 val resolution =
                     OutputResolution.entries.firstOrNull { it.name == call.argument<String>("resolution") }
                         ?: OutputResolution.p1080
-                initialize(call.argument<String>("lens") != "back", resolution, result)
+                initialize(
+                    call.argument<String>("lens") != "back",
+                    resolution,
+                    call.argument<Int>("frameRate") ?: 30,
+                    result,
+                )
+            }
+            "supportedFrameRates" -> {
+                val resolution =
+                    OutputResolution.entries.firstOrNull { it.name == call.argument<String>("resolution") }
+                        ?: OutputResolution.p1080
+                worker.execute {
+                    val rates = OutputResolution.supportedFrameRates(context, resolution)
+                    mainHandler.post { result.success(rates) }
+                }
             }
             "setZoom" -> withPipeline(result) {
                 it.setZoom(call.argument<Double>("fraction")?.toFloat() ?: 0f)
@@ -186,11 +200,12 @@ class BgCameraPlugin :
     private fun initialize(
         front: Boolean,
         resolution: OutputResolution,
+        frameRate: Int,
         result: Result,
     ) {
         dispose()
         Recordings.clear(context)
-        val pipeline = CameraPipeline(context, textures, resolution)
+        val pipeline = CameraPipeline(context, textures, resolution, frameRate)
         this.pipeline = pipeline
         pipeline.start(front) { error ->
             if (error != null) {

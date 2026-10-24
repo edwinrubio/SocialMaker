@@ -35,6 +35,7 @@ import kotlin.math.roundToInt
 class GlRenderer(
     private val context: Context,
     private val resolution: OutputResolution,
+    private val frameRate: Int,
 ) {
     private val width = resolution.width
     private val height = resolution.height
@@ -460,7 +461,14 @@ class GlRenderer(
     }
 
     private fun createRecorder() =
-        SegmentRecorder(width, height, resolution.bitRate, Recordings.newFile(context, "segment"))
+        SegmentRecorder(
+            width,
+            height,
+            // More frames need more bits for the same quality.
+            if (frameRate > 30) resolution.bitRate * 3 / 2 else resolution.bitRate,
+            frameRate,
+            Recordings.newFile(context, "segment"),
+        )
 
     private fun prepareNextRecorder() {
         preparedRecorder = prepareExecutor.submit<SegmentRecorder> { createRecorder() }
