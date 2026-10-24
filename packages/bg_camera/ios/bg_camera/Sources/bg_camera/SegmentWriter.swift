@@ -8,14 +8,18 @@ struct RecordedSegment {
 }
 
 /// Writes one recorded fragment (H.264 + AAC) to a temporary .mp4.
-/// Used only from the pipeline queue.
+/// Video comes from the pipeline queue and audio from its own queue, so every
+/// call is serialized with `lock`.
 final class SegmentWriter {
+  private let lock = NSLock()
   private let writer: AVAssetWriter
   private let videoInput: AVAssetWriterInput
   private let audioInput: AVAssetWriterInput
   private let adaptor: AVAssetWriterInputPixelBufferAdaptor
   private let startTime: CMTime
   private var lastVideoTime: CMTime
+  /// Where the written audio ends; a later sample means audio was lost.
+  private var audioEnd: CMTime?
 
   init(width: Int, height: Int, bitRate: Int, startTime: CMTime) throws {
     let url = FileManager.default.temporaryDirectory
@@ -54,18 +58,69 @@ final class SegmentWriter {
   }
 
   func appendVideo(_ buffer: CVPixelBuffer, at time: CMTime) {
+    lock.lock()
+    defer { lock.unlock() }
     guard writer.status == .writing, videoInput.isReadyForMoreMediaData else { return }
     if adaptor.append(buffer, withPresentationTime: time) { lastVideoTime = time }
   }
 
   func appendAudio(_ sample: CMSampleBuffer) {
-    guard writer.status == .writing, audioInput.isReadyForMoreMediaData,
-      CMSampleBufferGetPresentationTimeStamp(sample) >= startTime
+    lock.lock()
+    defer { lock.unlock() }
+    let time = CMSampleBufferGetPresentationTimeStamp(sample)
+    guard writer.status == .writing, audioInput.isReadyForMoreMediaData, time >= startTime
     else { return }
-    audioInput.append(sample)
+    // Audio samples are written back to back, whatever their timestamps: a
+    // gap (microphone samples dropped while switching cameras) would pull
+    // the rest of the audio ahead of the video. Fill it with silence.
+    if let audioEnd, time - audioEnd > Self.maxAudioGap,
+      let silence = Self.silence(like: sample, at: audioEnd, duration: time - audioEnd),
+      audioInput.append(silence)
+    {
+      self.audioEnd = time
+    }
+    guard audioInput.isReadyForMoreMediaData, audioInput.append(sample) else { return }
+    audioEnd = time + CMSampleBufferGetDuration(sample)
+  }
+
+  private static let maxAudioGap = CMTime(value: 1, timescale: 50)
+
+  /// Silent PCM in [sample]'s format, from [time] for [duration].
+  private static func silence(like sample: CMSampleBuffer, at time: CMTime, duration: CMTime)
+    -> CMSampleBuffer?
+  {
+    guard let format = CMSampleBufferGetFormatDescription(sample),
+      let description = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee,
+      description.mFormatID == kAudioFormatLinearPCM, description.mBytesPerFrame > 0
+    else { return nil }
+    let frames = Int((CMTimeGetSeconds(duration) * description.mSampleRate).rounded())
+    guard frames > 0 else { return nil }
+    let nonInterleaved = description.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0
+    let bytes =
+      frames * Int(description.mBytesPerFrame) * (nonInterleaved ? Int(description.mChannelsPerFrame) : 1)
+    var block: CMBlockBuffer?
+    guard
+      CMBlockBufferCreateWithMemoryBlock(
+        allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: bytes,
+        blockAllocator: kCFAllocatorDefault, customBlockSource: nil, offsetToData: 0,
+        dataLength: bytes, flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block) == noErr,
+      let block,
+      CMBlockBufferFillDataBytes(
+        with: 0, blockBuffer: block, offsetIntoDestination: 0, dataLength: bytes) == noErr
+    else { return nil }
+    var silence: CMSampleBuffer?
+    guard
+      CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+        allocator: kCFAllocatorDefault, dataBuffer: block, formatDescription: format,
+        sampleCount: frames, presentationTimeStamp: time, packetDescriptions: nil,
+        sampleBufferOut: &silence) == noErr
+    else { return nil }
+    return silence
   }
 
   func finish(completion: @escaping (Result<RecordedSegment, Error>) -> Void) {
+    lock.lock()
+    defer { lock.unlock() }
     let durationMs = Int((CMTimeGetSeconds(lastVideoTime - startTime) * 1000).rounded())
     videoInput.markAsFinished()
     audioInput.markAsFinished()
@@ -95,6 +150,8 @@ final class SegmentWriter {
   }
 
   func cancel() {
+    lock.lock()
+    defer { lock.unlock() }
     writer.cancelWriting()
     try? FileManager.default.removeItem(at: writer.outputURL)
   }

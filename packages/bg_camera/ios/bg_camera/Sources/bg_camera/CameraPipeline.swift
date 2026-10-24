@@ -120,7 +120,24 @@ final class CameraPipeline: NSObject, FlutterTexture,
   private let latestLock = NSLock()
   private var latestBuffer: CVPixelBuffer?
 
-  private var writer: SegmentWriter?
+  /// Set on `queue`, also read from `audioQueue`.
+  private var writer: SegmentWriter? {
+    get {
+      writerLock.lock()
+      defer { writerLock.unlock() }
+      return _writer
+    }
+    set {
+      writerLock.lock()
+      _writer = newValue
+      writerLock.unlock()
+    }
+  }
+  private var _writer: SegmentWriter?
+  private let writerLock = NSLock()
+  /// The microphone's own queue: reconfiguring the session on `queue` (e.g.
+  /// switching cameras) must not hold up audio, or samples get dropped.
+  private let audioQueue = DispatchQueue(label: "bg_camera.audio")
   private var pendingStart = false
 
   private var _background: BackgroundSource?
@@ -146,7 +163,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
       output.alwaysDiscardsLateVideoFrames = true
       output.setSampleBufferDelegate(self, queue: queue)
     }
-    audioOutput.setSampleBufferDelegate(self, queue: queue)
+    audioOutput.setSampleBufferDelegate(self, queue: audioQueue)
   }
 
   /// Both cameras at once: real devices that support it, or the simulator
@@ -335,7 +352,8 @@ final class CameraPipeline: NSObject, FlutterTexture,
   func captureOutput(
     _ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection
   ) {
-    if output === audioOutput {
+    // By type: `audioOutput` itself is replaced on `queue`.
+    if output is AVCaptureAudioDataOutput {
       writer?.appendAudio(sampleBuffer)
       return
     }
