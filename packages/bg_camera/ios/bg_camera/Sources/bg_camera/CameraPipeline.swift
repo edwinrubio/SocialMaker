@@ -70,11 +70,13 @@ final class CameraPipeline: NSObject, FlutterTexture,
   private let textures: FlutterTextureRegistry
   private var session = AVCaptureSession()
   private let queue = DispatchQueue(label: "bg_camera.pipeline")
+  // Outputs are recreated with every session: an output that moved to a new
+  // session makes the old one assert when it is freed.
   /// The camera in single mode; the back camera in dual mode.
-  private let videoOutput = AVCaptureVideoDataOutput()
+  private var videoOutput = AVCaptureVideoDataOutput()
   /// The front camera in dual mode.
-  private let frontOutput = AVCaptureVideoDataOutput()
-  private let audioOutput = AVCaptureAudioDataOutput()
+  private var frontOutput = AVCaptureVideoDataOutput()
+  private var audioOutput = AVCaptureAudioDataOutput()
   private var cameraInputs: [AVCaptureDevice.Position: AVCaptureDeviceInput] = [:]
   /// The camera that fills the frame.
   private var position: AVCaptureDevice.Position = .front
@@ -110,6 +112,13 @@ final class CameraPipeline: NSObject, FlutterTexture,
     self.textures = textures
     self.resolution = resolution
     super.init()
+    makeOutputs()
+  }
+
+  private func makeOutputs() {
+    videoOutput = AVCaptureVideoDataOutput()
+    frontOutput = AVCaptureVideoDataOutput()
+    audioOutput = AVCaptureAudioDataOutput()
     for output in [videoOutput, frontOutput] {
       output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
       output.alwaysDiscardsLateVideoFrames = true
@@ -238,7 +247,15 @@ final class CameraPipeline: NSObject, FlutterTexture,
       var failure: Error?
       do {
         if enabled {
-          try self.configureMultiCam()
+          try self.configureMultiCam(width: min(self.resolution.height, 1920))
+          // Over budget: two smaller feeds.
+          if let multiCam = self.session as? AVCaptureMultiCamSession, multiCam.hardwareCost > 1 {
+            self.teardownSession()
+            try self.configureMultiCam(width: 1280)
+            if let retry = self.session as? AVCaptureMultiCamSession, retry.hardwareCost > 1 {
+              throw CameraError.dualUnsupported
+            }
+          }
         } else {
           try self.configureSingle()
         }
@@ -368,6 +385,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
 
   /// A fresh single-camera session with the current main camera. On `queue`.
   private func configureSingle() throws {
+    makeOutputs()
     session = AVCaptureSession()
     session.beginConfiguration()
     defer { session.commitConfiguration() }
@@ -384,15 +402,15 @@ final class CameraPipeline: NSObject, FlutterTexture,
 
   /// Back camera into `videoOutput`, front into `frontOutput`, each with an
   /// explicit connection, plus the microphone. On `queue`.
-  private func configureMultiCam() throws {
+  private func configureMultiCam(width targetWidth: Int) throws {
     guard AVCaptureMultiCamSession.isMultiCamSupported else { throw CameraError.dualUnsupported }
+    makeOutputs()
     let multiCam = AVCaptureMultiCamSession()
     session = multiCam
     multiCam.beginConfiguration()
     defer { multiCam.commitConfiguration() }
 
-    // Both feeds are at most 1080p: 4K is not available with two cameras.
-    let targetWidth = min(resolution.height, 1920)
+    // [targetWidth] is at most 1080p: 4K is not available with two cameras.
     for (position, output) in [(AVCaptureDevice.Position.back, videoOutput), (.front, frontOutput)] {
       guard
         let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
