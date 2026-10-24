@@ -285,14 +285,24 @@ class GlRenderer(
         // The window has the frame's aspect ratio, so the same fill applies.
         val pipScale = pip?.let { scaleAndMatrix(it, pipMatrix) }
 
+        // In dual mode the background effect follows the front camera (the one
+        // filming the person, and the one segmented), wherever it is drawn.
+        val backgroundSlot = if (dual) FRONT_SLOT else mainSlot
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, cameraTexture)
-        val program = selectProgram(cameraScale)
+        val program =
+            if (backgroundSlot == mainSlot) selectProgram(main, cameraScale, cameraMatrix) else programs.passthrough
+        val pipProgram =
+            if (pip != null && pipScale != null && backgroundSlot != mainSlot) {
+                selectProgram(pip, pipScale, pipMatrix).takeIf { it != programs.passthrough }
+            } else {
+                null
+            } ?: programs.pip
 
         previewSurface?.let { surface ->
             egl.makeCurrent(surface)
             drawQuad(program, cameraScale, previewWidth, previewHeight)
-            if (pip != null && pipScale != null) drawPip(pip, pipScale, previewWidth, previewHeight)
+            if (pip != null && pipScale != null) drawPip(pipProgram, pip, pipScale, previewWidth, previewHeight)
             // Finish on this thread so Flutter's consumer never waits on the
             // buffer's GPU fence on the platform thread (seconds on some GPUs).
             GLES20.glFinish()
@@ -303,7 +313,7 @@ class GlRenderer(
         if (recorder != null && recorderSurface != null) {
             egl.makeCurrent(recorderSurface)
             drawQuad(program, cameraScale, width, height)
-            if (pip != null && pipScale != null) drawPip(pip, pipScale, width, height)
+            if (pip != null && pipScale != null) drawPip(pipProgram, pip, pipScale, width, height)
             egl.setPresentationTime(recorderSurface, recorder.presentationNanos(timestampNanos))
             egl.swapBuffers(recorderSurface)
             recorder.onFrameRendered()
@@ -312,8 +322,15 @@ class GlRenderer(
         logFrameRate(timestampNanos)
     }
 
-    /** Uploads the mask and background for this frame and picks the matching shader. */
-    private fun selectProgram(cameraScale: FloatArray): Programs.Program {
+    /**
+     * Uploads the mask and background for this frame of [stream] (drawn with
+     * [scale] and [matrix]) and picks the matching shader.
+     */
+    private fun selectProgram(
+        stream: CameraStream,
+        scale: FloatArray,
+        matrix: FloatArray,
+    ): Programs.Program {
         val background = background ?: return programs.passthrough
         uploadPendingMask()
         if (!hasMask) return programs.passthrough
@@ -338,7 +355,7 @@ class GlRenderer(
                 return programs.compositeImage
             }
             is Background.Blur -> {
-                val blurred = renderBlurredCamera(cameraScale, background.strength)
+                val blurred = renderBlurredCamera(stream, scale, matrix, background.strength)
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE2)
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, blurred)
                 // The blurred frame is already upright and covers the output.
@@ -365,18 +382,22 @@ class GlRenderer(
         }
 
     /**
-     * Draws the upright camera frame small and blurs it in each direction;
+     * Draws [stream]'s upright frame small and blurs it in each direction;
      * returns the texture holding the result.
      */
     private fun renderBlurredCamera(
-        cameraScale: FloatArray,
+        stream: CameraStream,
+        scale: FloatArray,
+        matrix: FloatArray,
         strength: Float,
     ): Int {
         val (a, b) = blurTargets ?: arrayOf(RenderTarget(BLUR_WIDTH, BLUR_HEIGHT), RenderTarget(BLUR_WIDTH, BLUR_HEIGHT))
             .also { blurTargets = it }
 
         a.bind()
-        programs.passthrough.use(quad, cameraScale, cameraMatrix, IDENTITY)
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, stream.texture)
+        programs.passthrough.use(quad, scale, matrix, IDENTITY)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
 
         val blur = programs.blur
@@ -420,6 +441,7 @@ class GlRenderer(
 
     /** Draws the window's camera at [pipRect] (GL's origin is bottom-left). */
     private fun drawPip(
+        program: Programs.Program,
         stream: CameraStream,
         scale: FloatArray,
         viewportWidth: Int,
@@ -432,9 +454,10 @@ class GlRenderer(
         GLES20.glViewport(x, y, w, h)
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, stream.texture)
-        programs.pip.pipSize = floatArrayOf(w.toFloat(), h.toFloat())
-        programs.pip.use(quad, scale, pipMatrix, IDENTITY)
+        program.pipSize = floatArrayOf(w.toFloat(), h.toFloat())
+        program.use(quad, scale, pipMatrix, backgroundMatrix)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+        program.pipSize = ONE
         // The next surface starts with the main camera again.
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, cameraTexture)
     }
@@ -446,6 +469,7 @@ class GlRenderer(
         viewportHeight: Int,
     ) {
         GLES20.glViewport(0, 0, viewportWidth, viewportHeight)
+        program.pipSize = ONE
         program.use(quad, cameraScale, cameraMatrix, backgroundMatrix)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
     }
@@ -571,6 +595,9 @@ class GlRenderer(
     private companion object {
         const val TAG = "bg_camera"
         const val MAX_PREVIEW_HEIGHT = 1920
+
+        /** Slot of the front camera in dual mode. */
+        const val FRONT_SLOT = 1
 
         // The blurred background is drawn tiny; its size doesn't depend on the output.
         const val BLUR_WIDTH = 180

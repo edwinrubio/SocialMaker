@@ -52,16 +52,47 @@ class _RecorderScreenState extends State<RecorderScreen>
   );
 
   /// Shows the fragment full screen (highlighted in the strip meanwhile);
-  /// the user keeps or deletes it there.
+  /// the user keeps, trims or deletes it there.
   Future<void> _openSegment(int index) async {
     final c = _controller;
     if (c.selectedIndex != index) c.toggleSelection(index);
-    final delete = await showSegmentViewer(context, c.segments[index], index);
-    if (delete) {
+    final decision = await showSegmentViewer(context, c.segments[index], index);
+    if (decision is DeleteSegment) {
       c.removeSegmentAt(index);
-    } else if (c.selectedIndex == index) {
-      c.toggleSelection(index);
+      return;
     }
+    if (decision case TrimSegment(:final start, :final end)) {
+      c.trimSegmentAt(index, start, end);
+    }
+    if (c.selectedIndex == index) c.toggleSelection(index);
+  }
+
+  Future<void> _deleteAllSegments() async {
+    final count = _controller.segments.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('¿Borrar todos los fragmentos?'),
+        content: Text(
+          count == 1
+              ? 'Se borrará el fragmento grabado. No se puede deshacer.'
+              : 'Se borrarán los $count fragmentos grabados. '
+                    'No se puede deshacer.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Brand.pink),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Borrar todo'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed ?? false) _controller.clearSegments();
   }
 
   Future<void> _openSettings() async {
@@ -134,7 +165,7 @@ class _RecorderScreenState extends State<RecorderScreen>
       child: Column(
         children: [
           SegmentBar(
-            segments: [for (final s in c.segments) s.duration],
+            segments: [for (final s in c.segments) s.length],
             current: c.currentSegmentDuration,
             max: c.maxDuration,
           ),
@@ -157,10 +188,23 @@ class _RecorderScreenState extends State<RecorderScreen>
             ),
           const Spacer(),
           if (hasSegments) ...[
-            SegmentStrip(
-              segments: c.segments,
-              selectedIndex: c.selectedIndex,
-              onTap: idle ? _openSegment : (_) {},
+            Row(
+              children: [
+                Expanded(
+                  child: SegmentStrip(
+                    segments: c.segments,
+                    selectedIndex: c.selectedIndex,
+                    onTap: idle ? _openSegment : (_) {},
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _ControlButton(
+                  key: const Key('delete-all-segments'),
+                  icon: Icons.delete_sweep_outlined,
+                  tooltip: 'Borrar todos los fragmentos',
+                  onPressed: idle ? _deleteAllSegments : null,
+                ),
+              ],
             ),
             const SizedBox(height: 12),
           ],
@@ -265,6 +309,7 @@ class _Timer extends StatelessWidget {
 
 class _ControlButton extends StatelessWidget {
   const _ControlButton({
+    super.key,
     required this.icon,
     required this.tooltip,
     required this.onPressed,

@@ -87,13 +87,36 @@ class RecordedSegment {
     required this.path,
     required this.duration,
     this.thumbnailPath,
-  });
+    this.start = Duration.zero,
+    Duration? end,
+  }) : _end = end; // ignore: prefer_initializing_formals
 
   final String path;
+
+  /// Length of the recorded file.
   final Duration duration;
 
   /// JPEG of the fragment's first frame, when one could be extracted.
   final String? thumbnailPath;
+
+  /// Part of the file that goes into the video; the rest is trimmed away
+  /// when merging. The file itself is never cut, so a trim can be undone.
+  final Duration start;
+  final Duration? _end;
+  Duration get end => _end ?? duration;
+
+  /// Length after trimming.
+  Duration get length => end - start;
+
+  bool get isTrimmed => start > Duration.zero || end < duration;
+
+  RecordedSegment trimmed(Duration start, Duration end) => RecordedSegment(
+    path: path,
+    duration: duration,
+    thumbnailPath: thumbnailPath,
+    start: start < Duration.zero ? Duration.zero : start,
+    end: end > duration ? duration : end,
+  );
 }
 
 /// One subtitle phrase and when it is shown.
@@ -243,10 +266,18 @@ class BgCamera {
     );
   }
 
-  /// Concatenates [paths] in order into a single video and returns its path.
-  Future<String> mergeSegments(List<String> paths) async {
+  /// Concatenates the trimmed part of each of [segments], in order, into a
+  /// single video and returns its path.
+  Future<String> mergeSegments(List<RecordedSegment> segments) async {
     final path = await _channel.invokeMethod<String>('mergeSegments', {
-      'paths': paths,
+      'segments': [
+        for (final s in segments)
+          {
+            'path': s.path,
+            'startMs': s.start.inMilliseconds,
+            'endMs': s.end.inMilliseconds,
+          },
+      ],
     });
     return path!;
   }

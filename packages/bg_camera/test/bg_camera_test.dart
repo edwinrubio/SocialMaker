@@ -41,7 +41,11 @@ void main() {
   test('initialize returns preview info', () async {
     final info = await BgCamera().initialize(lens: CameraLens.back);
 
-    expect(calls.single.arguments, {'lens': 'back', 'resolution': 'p1080'});
+    expect(calls.single.arguments, {
+      'lens': 'back',
+      'resolution': 'p1080',
+      'frameRate': 30,
+    });
     expect(info.textureId, 7);
     expect(info.aspectRatio, 720 / 1280);
   });
@@ -57,11 +61,27 @@ void main() {
   test('setBackground and mergeSegments send arguments', () async {
     final camera = BgCamera();
     await camera.setBackground(BackgroundType.image, path: '/tmp/bg.jpg');
-    final merged = await camera.mergeSegments(['/a.mp4', '/b.mp4']);
+    final merged = await camera.mergeSegments([
+      const RecordedSegment(path: '/a.mp4', duration: Duration(seconds: 2)),
+      const RecordedSegment(
+        path: '/b.mp4',
+        duration: Duration(seconds: 3),
+      ).trimmed(
+        const Duration(milliseconds: 250),
+        const Duration(milliseconds: 2500),
+      ),
+    ]);
 
-    expect(calls[0].arguments, {'type': 'image', 'path': '/tmp/bg.jpg'});
+    expect(calls[0].arguments, {
+      'type': 'image',
+      'path': '/tmp/bg.jpg',
+      'blurStrength': 0.5,
+    });
     expect(calls[1].arguments, {
-      'paths': ['/a.mp4', '/b.mp4'],
+      'segments': [
+        {'path': '/a.mp4', 'startMs': 0, 'endMs': 2000},
+        {'path': '/b.mp4', 'startMs': 250, 'endMs': 2500},
+      ],
     });
     expect(merged, '/tmp/out.mp4');
   });

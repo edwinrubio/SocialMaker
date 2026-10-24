@@ -121,8 +121,16 @@ public class BgCameraPlugin: NSObject, FlutterPlugin {
         }
       }
     case "mergeSegments":
-      let paths = args["paths"] as? [String] ?? []
-      SegmentMerger.merge(urls: paths.map { URL(fileURLWithPath: $0) }) { outcome in
+      let segments = args["segments"] as? [[String: Any]] ?? []
+      let pieces = segments.compactMap { segment -> SegmentPiece? in
+        guard let path = segment["path"] as? String else { return nil }
+        let millis = { (key: String) in
+          (segment[key] as? NSNumber).map { CMTime(value: $0.int64Value, timescale: 1000) }
+        }
+        return SegmentPiece(
+          url: URL(fileURLWithPath: path), start: millis("startMs") ?? .zero, end: millis("endMs"))
+      }
+      SegmentMerger.merge(pieces: pieces) { outcome in
         DispatchQueue.main.async {
           switch outcome {
           case .success(let url): result(url.path)

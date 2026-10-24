@@ -47,7 +47,7 @@ App para **iPhone y Android** hecha en Flutter. Todo se procesa **en tu teléfon
 | 🔄 | **Cambiar de cámara grabando** | Pasa de la delantera a la trasera sin cortar el fragmento. |
 | 🖼️ | **Dos cámaras a la vez** | La cámara principal ocupa toda la pantalla y la otra va en una ventanita que puedes mover a donde quieras. Ambas quedan en el video. |
 | 🧑‍🎨 | **Fondos** | Reemplaza lo que está detrás de ti por una **foto** o un **video**, o **desenfócalo** con la intensidad que prefieras. |
-| ✂️ | **Revisar y borrar fragmentos** | Mira cada fragmento a pantalla completa, adelántalo y decide si lo conservas o lo borras. |
+| ✂️ | **Revisar, recortar y borrar** | Mira cada fragmento a pantalla completa, adelántalo, quítale el inicio o el final, o bórralo. También puedes borrar todo y empezar de nuevo. |
 | ⚙️ | **Calidad** | 720p, 1080p o 4K, y 24, 30 o 60 fps. Solo aparecen las opciones que tu teléfono soporta. |
 | 💬 | **Subtítulos automáticos** *(iPhone)* | La IA de Apple transcribe tu voz en el teléfono. Puedes corregir cada frase antes de guardar. |
 | 📤 | **Compartir** | En un toque a TikTok, Instagram o YouTube Shorts, o guarda en tu galería. |
@@ -70,7 +70,11 @@ App para **iPhone y Android** hecha en Flutter. Todo se procesa **en tu teléfon
 - **Toca una miniatura** para verla a pantalla completa.
 - Usa la barra de tiempo para **adelantar o retroceder**. Tocar el video lo pausa.
 - Elige **Conservar** o **Borrar**.
+- **Recortar** (arriba a la derecha) muestra una barra con dos extremos: arrástralos para quitar el inicio o el final. Debajo ves cuánto queda. Toca **Aplicar** y luego **Conservar**.
+  - El recorte no borra nada del archivo: puedes volver a entrar y elegir **Usar el fragmento completo**.
+  - En Android el inicio del recorte puede quedar hasta medio segundo antes de lo marcado.
 - El botón ⌫ de la grabadora borra el último fragmento.
+- El botón 🗑 junto a las miniaturas **borra todos los fragmentos** (te pide confirmar).
 
 ### 3. Fondos y filtros
 
@@ -90,6 +94,7 @@ Toca **Filtros → Fondos**:
 1. Toca **2 cámaras**. Si tu teléfono no lo permite, la app te lo dice.
 2. **Arrastra** la ventanita a donde quieras. Se queda ahí y se recuerda para la próxima vez.
 3. **Toca** la ventanita, o el botón ⟲, para intercambiar las cámaras. También funciona mientras grabas.
+4. Los fondos y el desenfoque se aplican a la **cámara frontal** (la que te graba a ti), esté en pantalla completa o en la ventanita.
 
 ### 5. Calidad del video
 
@@ -188,12 +193,12 @@ La prueba de integración recorre el flujo completo:
 
 1. elegir fps;
 2. grabar con hold, con toques y con zoom;
-3. revisar, adelantar y borrar un fragmento;
+3. borrar todo; revisar, adelantar, recortar y borrar un fragmento;
 4. cambiar de cámara grabando;
-5. dos cámaras: mover la ventana e intercambiar;
+5. dos cámaras: mover la ventana, intercambiar y desenfoque en la cámara frontal;
 6. unir y quemar subtítulos.
 
-**Simulador de iOS:** no tiene cámara, así que la app usa `~/Library/Caches/SocialMaker/fake_camera.mp4` de tu Mac como cámara y micrófono. Si existe `bg_test.jpg` en la misma carpeta, la prueba también lo usa como fondo. Este código solo se compila para el simulador.
+**Simulador de iOS:** no tiene cámara, así que la app usa `~/Library/Caches/SocialMaker/fake_camera.mp4` de tu Mac como cámara y micrófono. Si existe `bg_test.jpg` en la misma carpeta, la prueba también lo usa como fondo. Los simuladores recientes no pueden detectar personas, así que allí un óvalo central hace de persona. Este código solo se compila para el simulador.
 
 ### Estructura
 

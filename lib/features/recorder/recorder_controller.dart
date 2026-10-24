@@ -67,7 +67,7 @@ class RecorderController extends ChangeNotifier {
   Timer? _ticker;
 
   Duration get recordedDuration =>
-      _segments.fold(Duration.zero, (total, s) => total + s.duration);
+      _segments.fold(Duration.zero, (total, s) => total + s.length);
 
   /// Recorded time plus the fragment currently being recorded.
   Duration get liveDuration =>
@@ -183,13 +183,20 @@ class RecorderController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Keeps only [start]..[end] of fragment [index] in the final video.
+  void trimSegmentAt(int index, Duration start, Duration end) {
+    _segments[index] = _segments[index].trimmed(start, end);
+    notifyListeners();
+  }
+
   /// Removes the selected fragment, or the last one when none is selected.
   void removeSelectedOrLastSegment() {
     if (_segments.isEmpty) return;
     removeSegmentAt(selectedIndex ?? _segments.length - 1);
   }
 
-  /// Deletes every fragment, e.g. after the final video was exported.
+  /// Deletes every fragment: after the final video was exported, or when the
+  /// user starts over.
   void clearSegments() {
     _segments.forEach(_deleteSegmentFiles);
     _segments.clear();
@@ -303,8 +310,7 @@ class RecorderController extends ChangeNotifier {
   }
 
   /// Merges the remaining fragments, in order, and returns the video path.
-  Future<String> export() =>
-      camera.mergeSegments([for (final s in _segments) s.path]);
+  Future<String> export() => camera.mergeSegments(_segments);
 
   @override
   void dispose() {

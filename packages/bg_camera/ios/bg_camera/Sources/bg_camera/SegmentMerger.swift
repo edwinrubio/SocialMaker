@@ -12,10 +12,17 @@ enum MergeError: LocalizedError {
   }
 }
 
+/// Part of a recorded segment to keep: `end` nil means up to the end.
+struct SegmentPiece {
+  let url: URL
+  let start: CMTime
+  let end: CMTime?
+}
+
 /// Concatenates recorded segments, in order, into one .mp4.
 enum SegmentMerger {
-  static func merge(urls: [URL], completion: @escaping (Result<URL, Error>) -> Void) {
-    guard !urls.isEmpty else {
+  static func merge(pieces: [SegmentPiece], completion: @escaping (Result<URL, Error>) -> Void) {
+    guard !pieces.isEmpty else {
       completion(.failure(MergeError.noSegments))
       return
     }
@@ -27,9 +34,13 @@ enum SegmentMerger {
 
     var cursor = CMTime.zero
     do {
-      for url in urls {
-        let asset = AVURLAsset(url: url)
-        let range = CMTimeRange(start: .zero, duration: asset.duration)
+      for piece in pieces {
+        let asset = AVURLAsset(url: piece.url)
+        let full = CMTimeRange(start: .zero, duration: asset.duration)
+        let range = CMTimeRange(
+          start: piece.start, end: min(piece.end ?? asset.duration, asset.duration)
+        ).intersection(full)
+        guard range.duration > .zero else { continue }
         if let video = asset.tracks(withMediaType: .video).first {
           if videoTrack == nil {
             videoTrack = composition.addMutableTrack(
@@ -43,9 +54,12 @@ enum SegmentMerger {
             audioTrack = composition.addMutableTrack(
               withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
           }
-          try audioTrack?.insertTimeRange(
-            CMTimeRange(start: .zero, duration: min(range.duration, audio.timeRange.end)), of: audio,
-            at: cursor)
+          let audioRange = range.intersection(audio.timeRange)
+          if audioRange.duration > .zero {
+            // Audio can start a little after the video; keep it in sync.
+            try audioTrack?.insertTimeRange(
+              audioRange, of: audio, at: cursor + (audioRange.start - range.start))
+          }
         }
         cursor = cursor + range.duration
       }

@@ -534,30 +534,17 @@ final class CameraPipeline: NSObject, FlutterTexture,
   /// output-sized buffer.
   private func composite(_ cameraBuffer: CVPixelBuffer) -> CVPixelBuffer? {
     let extent = CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight)
-    let frame = CIImage(cvPixelBuffer: cameraBuffer)
-    let camera = frame.aspectFilled(to: extent)
-    var image = camera
-
-    if let background = _background,
-      let backgroundImage = background.image(for: extent, camera: camera)
-    {
-      // A fresh handler per frame: VNSequenceRequestHandler smooths the mask
-      // over time, which leaves a ghost of the previous pose when moving.
-      try? VNImageRequestHandler(cvPixelBuffer: cameraBuffer).perform([segmentation])
-      if let maskBuffer = segmentation.results?.first?.pixelBuffer {
-        // Vision's mask has its own size and aspect ratio: stretch it over the
-        // frame first, then crop it exactly like the camera.
-        let mask = Self.refined(CIImage(cvPixelBuffer: maskBuffer))
-          .stretched(to: frame.extent)
-          .aspectFilled(to: extent)
-        image = camera.applyingFilter(
-          "CIBlendWithMask",
-          parameters: [kCIInputBackgroundImageKey: backgroundImage, kCIInputMaskImageKey: mask])
-      }
-    }
+    // In dual mode the background effect follows the front camera, the one
+    // filming the person, whether it fills the frame or the small window.
+    let mainHasBackground = !dual || position == .front
+    var image = filled(cameraBuffer, to: extent, withBackground: mainHasBackground)
 
     if dual, let pip = latestPip {
-      image = Self.addingPictureInPicture(CIImage(cvPixelBuffer: pip), to: image, at: pipRect, in: extent)
+      let frame = Self.pipFrame(pipRect, in: extent)
+      let window = filled(
+        pip, to: CGRect(origin: .zero, size: frame.size), withBackground: !mainHasBackground
+      ).transformed(by: CGAffineTransform(translationX: frame.minX, y: frame.minY))
+      image = Self.addingPictureInPicture(window, to: image, at: frame)
     }
 
     guard let output = makeOutputBuffer() else { return nil }
@@ -565,16 +552,70 @@ final class CameraPipeline: NSObject, FlutterTexture,
     return output
   }
 
-  /// Draws [pip] as a rounded window at [rect] (fractions of [extent],
-  /// top-left origin).
-  private static func addingPictureInPicture(
-    _ pip: CIImage, to image: CIImage, at rect: CGRect, in extent: CGRect
+  /// [cameraBuffer] cropped to fill [extent], with the background behind the
+  /// person replaced when [withBackground] and one is set.
+  private func filled(
+    _ cameraBuffer: CVPixelBuffer, to extent: CGRect, withBackground: Bool
   ) -> CIImage {
-    // Core Image's origin is bottom-left.
-    let frame = CGRect(
+    let frame = CIImage(cvPixelBuffer: cameraBuffer)
+    let camera = frame.aspectFilled(to: extent)
+    guard withBackground, let background = _background,
+      let backgroundImage = background.image(for: extent, camera: camera)
+    else { return camera }
+
+    // A fresh handler per frame: VNSequenceRequestHandler smooths the mask
+    // over time, which leaves a ghost of the previous pose when moving.
+    try? VNImageRequestHandler(cvPixelBuffer: cameraBuffer).perform([segmentation])
+    let mask: CIImage
+    if let maskBuffer = segmentation.results?.first?.pixelBuffer {
+      // Vision's mask has its own size and aspect ratio: stretch it over the
+      // frame first, then crop it exactly like the camera.
+      mask = Self.refined(CIImage(cvPixelBuffer: maskBuffer))
+        .stretched(to: frame.extent)
+        .aspectFilled(to: extent)
+    } else {
+      #if targetEnvironment(simulator)
+        // Recent simulators can't run person segmentation ("E5RT is not
+        // supported"): a centered oval stands in for the person.
+        mask = Self.simulatorMask(in: extent)
+      #else
+        return camera
+      #endif
+    }
+    return camera.applyingFilter(
+      "CIBlendWithMask",
+      parameters: [kCIInputBackgroundImageKey: backgroundImage, kCIInputMaskImageKey: mask])
+  }
+
+  #if targetEnvironment(simulator)
+    private static func simulatorMask(in extent: CGRect) -> CIImage {
+      let radius = extent.width * 0.3
+      return (CIFilter(
+        name: "CIRadialGradient",
+        parameters: [
+          "inputCenter": CIVector(x: extent.midX, y: extent.midY), "inputRadius0": radius * 0.9,
+          "inputRadius1": radius, "inputColor0": CIColor.white, "inputColor1": CIColor.black,
+        ])?.outputImage ?? CIImage.empty())
+        .transformed(by: CGAffineTransform(translationX: -extent.midX, y: -extent.midY))
+        .transformed(by: CGAffineTransform(scaleX: 1, y: 1.4))
+        .transformed(by: CGAffineTransform(translationX: extent.midX, y: extent.midY))
+        .cropped(to: extent)
+    }
+  #endif
+
+  /// The picture-in-picture window [rect] (fractions of [extent], top-left
+  /// origin) in Core Image coordinates, whose origin is bottom-left.
+  private static func pipFrame(_ rect: CGRect, in extent: CGRect) -> CGRect {
+    CGRect(
       x: rect.minX * extent.width, y: (1 - rect.maxY) * extent.height,
       width: rect.width * extent.width, height: rect.height * extent.height
     ).integral
+  }
+
+  /// Draws [window], already sized to [frame], as a rounded window over [image].
+  private static func addingPictureInPicture(
+    _ window: CIImage, to image: CIImage, at frame: CGRect
+  ) -> CIImage {
     let mask =
       CIFilter(
         name: "CIRoundedRectangleGenerator",
@@ -582,7 +623,7 @@ final class CameraPipeline: NSObject, FlutterTexture,
           "inputExtent": CIVector(cgRect: frame), "inputRadius": frame.width * 0.1, "inputColor": CIColor.white,
         ]
       )?.outputImage ?? CIImage.empty()
-    return pip.aspectFilled(to: frame).applyingFilter(
+    return window.applyingFilter(
       "CIBlendWithMask",
       parameters: [kCIInputBackgroundImageKey: image, kCIInputMaskImageKey: mask])
   }

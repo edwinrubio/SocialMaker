@@ -103,6 +103,17 @@ void main() {
     }
     await step(tester, 'frame-rate');
 
+    // Start over: record one fragment and delete them all.
+    await tapRecord(tester, const Duration(milliseconds: 1500));
+    expect(find.bySemanticsLabel(RegExp('^Fragmento 1')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('delete-all-segments')));
+    await wait(tester, const Duration(seconds: 1));
+    await step(tester, 'delete-all-confirm');
+    await tester.tap(find.text('Borrar todo'));
+    await wait(tester, const Duration(seconds: 1));
+    expect(find.bySemanticsLabel(RegExp('^Fragmento 1')), findsNothing);
+    await step(tester, 'deleted-all');
+
     await hold(tester, const Duration(milliseconds: 2500));
     await tapRecord(tester, const Duration(milliseconds: 1500));
     await hold(tester, const Duration(seconds: 3), slideUp: 250);
@@ -128,6 +139,33 @@ void main() {
     await wait(tester, const Duration(seconds: 1));
     expect(find.bySemanticsLabel(RegExp('^Fragmento 3')), findsNothing);
     await step(tester, 'deleted-2');
+
+    // Trim the start of fragment 1.
+    String header() => tester
+        .widget<Text>(find.textContaining(RegExp(r'^Fragmento 1 · ')))
+        .data!;
+    double seconds(String text) =>
+        double.parse(RegExp(r'([\d.]+) s$').firstMatch(text)!.group(1)!);
+    await tester.tap(find.bySemanticsLabel(RegExp('^Fragmento 1')));
+    await wait(tester, const Duration(seconds: 1));
+    final before = seconds(header());
+    await tester.tap(find.text('Recortar'));
+    await wait(tester, const Duration(seconds: 1));
+    final trimmer = find.byKey(const Key('segment-trimmer'));
+    final track = tester.getRect(trimmer);
+    await tester.dragFrom(
+      Offset(track.left + 24, track.center.dy),
+      Offset(track.width * 0.3, 0),
+    );
+    await wait(tester, const Duration(seconds: 1));
+    await step(tester, 'trimming-1');
+    await tester.tap(find.text('Aplicar'));
+    await wait(tester, const Duration(seconds: 2));
+    final after = seconds(header());
+    expect(after, lessThan(before - 0.3), reason: 'trim did not apply');
+    await step(tester, 'trimmed-1');
+    await tester.tap(find.text('Conservar'));
+    await wait(tester, const Duration(seconds: 1));
 
     // Switch cameras in the middle of a fragment.
     await tester.tap(find.byType(RecordButton));
@@ -165,6 +203,16 @@ void main() {
       await wait(tester, const Duration(seconds: 2));
       expect(find.bySemanticsLabel(RegExp('^Fragmento 4')), findsOneWidget);
       await step(tester, 'dual-recorded');
+
+      // The blur follows the front camera, whichever one fills the frame.
+      // (The simulator's scene has no person, so the front one blurs whole.)
+      await BgCamera().setBackground(BackgroundType.blur, blurStrength: 1);
+      await wait(tester, const Duration(seconds: 1));
+      await step(tester, 'dual-blur');
+      await tester.tap(find.byKey(const Key('pip-window')));
+      await wait(tester, const Duration(seconds: 1));
+      await step(tester, 'dual-blur-swapped');
+      await BgCamera().setBackground(BackgroundType.none);
     }
 
     await tester.tap(find.byIcon(Icons.check_circle));

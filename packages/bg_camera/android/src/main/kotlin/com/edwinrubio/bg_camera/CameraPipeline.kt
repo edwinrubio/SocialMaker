@@ -358,9 +358,10 @@ class CameraPipeline(
                         ).setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
                         .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                         .build()
-                // Only the camera that fills the frame is segmented.
+                // Only the front camera, the one filming the person, is
+                // segmented: the background effect follows it (GlRenderer).
                 analysis.setAnalyzer(analysisExecutor) { image ->
-                    if (lensFront == front) analyze(image, lensFront) else image.close()
+                    if (lensFront) analyze(image, mirror = true) else image.close()
                 }
                 group.addUseCase(analysis)
             }

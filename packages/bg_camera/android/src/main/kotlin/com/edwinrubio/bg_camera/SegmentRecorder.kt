@@ -11,6 +11,7 @@ import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
 import android.media.MediaMuxer
 import android.media.MediaRecorder
+import android.os.Build
 import android.util.Log
 import android.view.Surface
 import java.io.File
@@ -95,7 +96,13 @@ class SegmentRecorder(
                 setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
                 setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
                 setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
-                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+                // Merging trims without re-encoding, so a trimmed start snaps
+                // to the previous key frame: keep them close together.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N_MR1) {
+                    setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, 0.5f)
+                } else {
+                    setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+                }
             }
         videoEncoder.configure(videoFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         inputSurface = videoEncoder.createInputSurface()

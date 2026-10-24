@@ -136,8 +136,15 @@ class BgCameraPlugin :
                 }
             }
             "mergeSegments" -> {
-                val paths = call.argument<List<String>>("paths").orEmpty()
-                SegmentMerger.merge(context, paths) { outcome ->
+                val pieces =
+                    call.argument<List<Map<String, Any?>>>("segments").orEmpty().map { segment ->
+                        SegmentPiece(
+                            path = segment["path"] as String,
+                            startUs = ((segment["startMs"] as? Number)?.toLong() ?: 0L) * 1000,
+                            endUs = (segment["endMs"] as? Number)?.toLong()?.times(1000),
+                        )
+                    }
+                SegmentMerger.merge(context, pieces) { outcome ->
                     outcome.fold(
                         { path -> result.success(path) },
                         { error -> result.error("merge_failed", error.message, null) },

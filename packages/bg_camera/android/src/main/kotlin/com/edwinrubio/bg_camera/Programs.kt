@@ -15,7 +15,10 @@ class Programs {
     /** One pass of a separable Gaussian blur; set [Program.texelStep] per direction. */
     val blur = Program(BLUR_FRAGMENT)
 
-    /** Second camera as a rounded window; set [Program.pipSize]. */
+    /**
+     * Second camera as a rounded window; set [Program.pipSize]. The composite
+     * programs draw a window too when it is set, and the whole frame at 1×1.
+     */
     val pip = Program(PIP_FRAGMENT)
 
     class Program(
@@ -99,6 +102,8 @@ class Programs {
         """
 
         // Soft threshold on the person confidence avoids a hard, flickering edge.
+        // With a window size set (uPipSize above 1 px) it is drawn as the
+        // rounded picture-in-picture window, like PIP_FRAGMENT.
         fun composite(backgroundSampler: String) =
             """
             #extension GL_OES_EGL_image_external : require
@@ -106,10 +111,17 @@ class Programs {
             varying vec2 vCameraUv;
             varying vec2 vMaskUv;
             varying vec2 vBackgroundUv;
+            varying vec2 vQuadUv;
             uniform samplerExternalOES uCamera;
             uniform sampler2D uMask;
             uniform $backgroundSampler uBackground;
+            uniform vec2 uPipSize;
             void main() {
+                if (uPipSize.x > 1.0) {
+                    float radius = uPipSize.x * 0.1;
+                    vec2 q = abs(vQuadUv * uPipSize - uPipSize * 0.5) - (uPipSize * 0.5 - radius);
+                    if (length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius > 0.0) discard;
+                }
                 float person = smoothstep(0.3, 0.7, texture2D(uMask, vMaskUv).r);
                 vec4 camera = texture2D(uCamera, vCameraUv);
                 vec4 background = texture2D(uBackground, vBackgroundUv);

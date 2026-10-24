@@ -20,6 +20,7 @@ class FakeBgCamera implements BgCamera {
   Duration nextDuration = const Duration(seconds: 2);
   bool failNextStop = false;
   List<String>? mergedPaths;
+  List<RecordedSegment>? merged;
   List<VideoResolution> supported = const [
     VideoResolution.p720,
     VideoResolution.p1080,
@@ -100,8 +101,9 @@ class FakeBgCamera implements BgCamera {
   }
 
   @override
-  Future<String> mergeSegments(List<String> paths) async {
-    mergedPaths = paths;
+  Future<String> mergeSegments(List<RecordedSegment> segments) async {
+    merged = segments;
+    mergedPaths = [for (final s in segments) s.path];
     return '/fake/out.mp4';
   }
 
@@ -194,6 +196,30 @@ void main() {
 
     controller.clearSegments();
     expect(controller.segments, isEmpty);
+  });
+
+  test('trimming shortens the total and is sent to the merge', () async {
+    await record(const Duration(seconds: 4));
+    await record(const Duration(seconds: 2));
+
+    controller.trimSegmentAt(
+      0,
+      const Duration(milliseconds: 500),
+      const Duration(seconds: 3),
+    );
+    expect(controller.recordedDuration, const Duration(milliseconds: 4500));
+    expect(controller.segments.first.isTrimmed, isTrue);
+    expect(controller.segments.last.isTrimmed, isFalse);
+
+    await controller.export();
+    final first = camera.merged!.first;
+    expect(first.start, const Duration(milliseconds: 500));
+    expect(first.end, const Duration(seconds: 3));
+    expect(camera.merged!.last.end, const Duration(seconds: 2));
+
+    // Undoing the trim restores the whole fragment.
+    controller.trimSegmentAt(0, Duration.zero, const Duration(seconds: 4));
+    expect(controller.segments.first.isTrimmed, isFalse);
   });
 
   test('delete button removes the selected fragment', () async {
