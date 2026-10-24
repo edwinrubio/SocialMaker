@@ -141,11 +141,17 @@ class _RecorderScreenState extends State<RecorderScreen>
           if (c.error != null && c.preview != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                c.error!,
-                style: const TextStyle(
-                  color: Colors.white70,
-                  shadows: [Shadow(blurRadius: 4)],
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  child: Text(c.error!, textAlign: TextAlign.center),
                 ),
               ),
             ),
